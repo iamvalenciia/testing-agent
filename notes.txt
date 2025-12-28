@@ -1,0 +1,13 @@
+QuestionID son diferentes tanto en el UI como en el hammer
+
+en el ui - graphite : WESTERNDIGITAL_Supplier_Integrations
+en el hammer: WESTERNDIGITAL.FINAL.Suppier.Integrations
+
+en el ui - graphite: WESTERNDIGITAL_Supplier_Integrations_List
+en el hammer: WESTERNDIGITAL.FINAL.Suppier.Integrations.List
+
+notas...
+necesito una forma de qu el agenete verifique que lo que esta haciend oesta bien...:
+solucion volver a recrear paso #2 step two para descargar hammer 
+y asi se ingresaria el contexto de las imagenes y con eso el agente podria verificar donde esta, etc...
+

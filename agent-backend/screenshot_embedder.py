@@ -1,0 +1,176 @@
+"""Screenshot Embedder - Generates multimodal embeddings using Gemini.
+
+This module takes screenshots and generates vector embeddings that can be
+used for visual similarity search in Pinecone. This enables the agent to
+recognize previously seen screens and retrieve relevant context.
+"""
+import base64
+import numpy as np
+from pathlib import Path
+from typing import List, Optional
+from google import genai
+from google.genai import types
+
+from config import GOOGLE_API_KEY
+
+
+class ScreenshotEmbedder:
+    """
+    Generate multimodal embeddings for screenshots using Gemini.
+    
+    Uses the gemini-embedding-001 model which supports:
+    - Text embeddings
+    - Image embeddings (multimodal)
+    - Configurable output dimensions (768, 1536, 3072)
+    """
+    
+    MODEL_NAME = "gemini-embedding-001"
+    DIMENSION = 768  # Recommended for efficiency (balance of quality/size)
+    TASK_TYPE_DOCUMENT = "RETRIEVAL_DOCUMENT"  # For indexing screenshots
+    TASK_TYPE_QUERY = "RETRIEVAL_QUERY"  # For searching
+    
+    def __init__(self):
+        self.client = genai.Client(api_key=GOOGLE_API_KEY)
+    
+    def _load_image_as_base64(self, image_path: str) -> str:
+        """Load an image file and convert to base64."""
+        path = Path(image_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Screenshot not found: {image_path}")
+        
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode("utf-8")
+    
+    def _normalize_embedding(self, embedding: List[float]) -> List[float]:
+        """
+        Normalize embedding to unit length.
+        
+        Required for dimensions < 3072 to ensure accurate cosine similarity.
+        """
+        arr = np.array(embedding)
+        norm = np.linalg.norm(arr)
+        if norm > 0:
+            arr = arr / norm
+        return arr.tolist()
+    
+    def embed_image(self, image_path: str, include_context: Optional[str] = None) -> List[float]:
+        """
+        Generate embedding from a screenshot file.
+        
+        Args:
+            image_path: Path to the screenshot PNG file
+            include_context: Optional text context to include with the image
+                            (e.g., action type, URL, reasoning)
+        
+        Returns:
+            768-dimensional embedding vector (normalized)
+        """
+        # Load image as base64
+        image_b64 = self._load_image_as_base64(image_path)
+        
+        # Create content parts
+        parts = []
+        
+        # Add image
+        parts.append(types.Part.from_bytes(
+            data=base64.b64decode(image_b64),
+            mime_type="image/png"
+        ))
+        
+        # Add context if provided
+        if include_context:
+            parts.append(types.Part(text=include_context))
+        
+        # Generate embedding
+        result = self.client.models.embed_content(
+            model=self.MODEL_NAME,
+            contents=types.Content(parts=parts),
+            config=types.EmbedContentConfig(
+                task_type=self.TASK_TYPE_DOCUMENT,
+                output_dimensionality=self.DIMENSION
+            )
+        )
+        
+        embedding = result.embeddings[0].values
+        
+        # Normalize for cosine similarity accuracy
+        return self._normalize_embedding(embedding)
+    
+    def embed_image_batch(
+        self, 
+        image_paths: List[str], 
+        contexts: Optional[List[str]] = None
+    ) -> List[List[float]]:
+        """
+        Batch embed multiple screenshots.
+        
+        Args:
+            image_paths: List of paths to screenshot PNG files
+            contexts: Optional list of context strings (same length as image_paths)
+        
+        Returns:
+            List of 768-dimensional embedding vectors
+        """
+        if contexts and len(contexts) != len(image_paths):
+            raise ValueError("contexts must have same length as image_paths")
+        
+        embeddings = []
+        for i, path in enumerate(image_paths):
+            context = contexts[i] if contexts else None
+            try:
+                embedding = self.embed_image(path, include_context=context)
+                embeddings.append(embedding)
+            except Exception as e:
+                print(f"⚠️ Failed to embed {path}: {e}")
+                # Append zero vector for failed embeddings
+                embeddings.append([0.0] * self.DIMENSION)
+        
+        return embeddings
+    
+    def embed_query(self, query_text: str) -> List[float]:
+        """
+        Generate query embedding for text searches against images.
+        
+        Use this when you want to search for screenshots using natural language.
+        Example: "login page with error message"
+        
+        Args:
+            query_text: Natural language description of what to find
+        
+        Returns:
+            768-dimensional embedding vector (normalized)
+        """
+        result = self.client.models.embed_content(
+            model=self.MODEL_NAME,
+            contents=query_text,
+            config=types.EmbedContentConfig(
+                task_type=self.TASK_TYPE_QUERY,
+                output_dimensionality=self.DIMENSION
+            )
+        )
+        
+        embedding = result.embeddings[0].values
+        return self._normalize_embedding(embedding)
+    
+    def compute_similarity(self, embedding1: List[float], embedding2: List[float]) -> float:
+        """
+        Compute cosine similarity between two embeddings.
+        
+        Returns:
+            Similarity score between -1 and 1 (higher = more similar)
+        """
+        arr1 = np.array(embedding1)
+        arr2 = np.array(embedding2)
+        return float(np.dot(arr1, arr2) / (np.linalg.norm(arr1) * np.linalg.norm(arr2)))
+
+
+# Singleton instance
+_embedder = None
+
+
+def get_embedder() -> ScreenshotEmbedder:
+    """Get the singleton ScreenshotEmbedder instance."""
+    global _embedder
+    if _embedder is None:
+        _embedder = ScreenshotEmbedder()
+    return _embedder
