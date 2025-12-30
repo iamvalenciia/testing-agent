@@ -11,17 +11,19 @@ from pinecone import Pinecone, ServerlessSpec
 class IndexType(str, Enum):
     """Types of Pinecone indexes with different retention policies."""
     HAMMER = "hammer-index"       # Hammer config - resets per ticket
-    JIRA = "jira-index"           # Jira data - resets per ticket
-    ZENDESK = "zendesk-index"     # Zendesk docs - resets per ticket
-    STEPS = "steps-index"         # Agent steps - persistent forever
+    WORKFLOWS = "steps-index"     # Episodic memory - reuses existing steps-index
     SCREENSHOTS = "screenshots-index"  # Visual search - persistent forever
+    # Deprecated indexes (kept for backwards compatibility)
+    JIRA = "jira-index"           # Jira data - deprecated
+    ZENDESK = "zendesk-index"     # Zendesk docs - deprecated
+    STEPS = "steps-index"         # Legacy alias for WORKFLOWS
 
 
 # Indexes that reset when testing a new ticket
-RESETTABLE_INDEXES = [IndexType.HAMMER, IndexType.JIRA, IndexType.ZENDESK]
+RESETTABLE_INDEXES = [IndexType.HAMMER]
 
-# Indexes that persist forever
-PERSISTENT_INDEXES = [IndexType.STEPS, IndexType.SCREENSHOTS]
+# Indexes that persist forever (episodic memory)
+PERSISTENT_INDEXES = [IndexType.WORKFLOWS, IndexType.SCREENSHOTS]
 
 
 class PineconeService:
@@ -37,36 +39,45 @@ class PineconeService:
         self.environment = environment
         self.pc = Pinecone(api_key=self.api_key)
         
-        # Dimensions per index type
+        # Dimensions per index type - ALL USE GEMINI 768-dim for consistency
         self.dimensions = {
-            IndexType.HAMMER: 1024,      # llama-text-embed-v2
-            IndexType.JIRA: 1024,        # llama-text-embed-v2
-            IndexType.ZENDESK: 1024,     # llama-text-embed-v2
-            IndexType.STEPS: 1024,       # llama-text-embed-v2
+            IndexType.HAMMER: 768,       # gemini-embedding-001
+            IndexType.WORKFLOWS: 768,    # gemini-embedding-001
             IndexType.SCREENSHOTS: 768,  # gemini-embedding-001
+            # Legacy/deprecated indexes (kept at original dims if they exist)
+            IndexType.JIRA: 1024,        # deprecated
+            IndexType.ZENDESK: 1024,     # deprecated
+            IndexType.STEPS: 768,        # alias for WORKFLOWS
         }
-        self.dimension = 1024  # Default for backwards compatibility
+        self.dimension = 768  # Default to Gemini dimension
         
-        # Ensure all indexes exist
+        # Only create active indexes (not deprecated ones)
         self._ensure_indexes_exist()
 
     def _ensure_indexes_exist(self):
-        """Create indexes if they don't exist."""
+        """Create active indexes if they don't exist (skip deprecated)."""
         existing = self.pc.list_indexes().names()
         
-        for index_type in IndexType:
+        # Only create active indexes, not deprecated ones
+        active_indexes = [IndexType.HAMMER, IndexType.WORKFLOWS, IndexType.SCREENSHOTS]
+        
+        for index_type in active_indexes:
             if index_type.value not in existing:
                 dimension = self.dimensions.get(index_type, self.dimension)
                 print(f"Creating index: {index_type.value} (dim={dimension})")
-                self.pc.create_index(
-                    name=index_type.value,
-                    dimension=dimension,
-                    metric="cosine",
-                    spec=ServerlessSpec(
-                        cloud="aws",
-                        region=self.environment
+                try:
+                    self.pc.create_index(
+                        name=index_type.value,
+                        dimension=dimension,
+                        metric="cosine",
+                        spec=ServerlessSpec(
+                            cloud="aws",
+                            region=self.environment
+                        )
                     )
-                )
+                except Exception as e:
+                    print(f"⚠️ Could not create index {index_type.value}: {e}")
+                    print(f"   If you hit plan limits, consider deleting unused indexes (jira-index, zendesk-index)")
 
     def get_index(self, index_type: IndexType):
         """Get a Pinecone index by type."""
@@ -144,12 +155,10 @@ class PineconeService:
         Returns:
             List of matching records with metadata
         """
-        # Generate embedding for query
-        embedding = self.pc.inference.embed(
-            model="llama-text-embed-v2",
-            inputs=[query_text],
-            parameters={"input_type": "query"}
-        ).data[0].values
+        # Generate embedding using Gemini (consistent with all indexes)
+        from screenshot_embedder import get_embedder
+        embedder = get_embedder()
+        embedding = embedder.embed_query(query_text)
         
         # Query hammer-index
         results = self.query_index(IndexType.HAMMER, embedding, top_k)

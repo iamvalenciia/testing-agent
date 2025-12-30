@@ -93,3 +93,5 @@ class SaveWorkflowRequest(BaseModel):
     name: str
     description: str
     tags: List[str] = []
+    steps: Optional[List[ActionStep]] = None  # Optional: send accumulated steps directly
+

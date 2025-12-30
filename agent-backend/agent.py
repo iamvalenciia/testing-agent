@@ -166,11 +166,12 @@ class ComputerUseAgent:
             context_parts.append("=" * 60)
             context_parts.append("""
 1. NEVER search on Google or any search engine unless explicitly asked
-2. If user says "paste" or "paste the ID" → USE THE CLIPBOARD VALUE ABOVE
+2. If user says "paste" or "paste the ID" -> USE THE CLIPBOARD VALUE ABOVE
 3. FOLLOW the user's CURRENT instruction, not old workflows
 4. If you already completed login, DON'T login again
 5. BE EFFICIENT - minimum clicks, no unnecessary actions
 6. When copying text, REMEMBER to store it mentally for future paste commands
+7. COMPLETION MESSAGES MUST BE CONCISE - one short sentence max (e.g. "Logged in successfully." or "Navigated to dashboard.")
 """)
             
             # 5. MANDATORY: Previously saved workflow with FULL DETAILS

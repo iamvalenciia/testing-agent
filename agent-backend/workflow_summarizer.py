@@ -81,30 +81,32 @@ RAW STEPS:
 Create an EXECUTION SUMMARY following this EXACT format:
 
 ```
-🎯 TASK: [One line description of what to achieve]
+TASK: [One line description of what to achieve]
 
-🌐 START URL: [The URL to navigate to first]
+START URL: [The URL to navigate to first]
 
-🔐 CREDENTIALS (if any):
-- Email/Username: [exact value]
-- Password: [exact value]
+CREDENTIALS (CRITICAL - INCLUDE ALL, NEVER REDACT):
+- Email/Username: [exact value - NEVER mask or redact this]
+- Password: [exact value - NEVER mask or redact this]
+- Any other text inputs: [exact values]
 
-📋 EXECUTION STEPS:
+EXECUTION STEPS:
 1. [Action] - [What to do] - [Important value if any]
 2. [Action] - [What to do] - [Important value if any]
 ...
 
-⚠️ IMPORTANT VALUES:
+IMPORTANT VALUES:
 - [Any IDs, codes, or specific text that must be used exactly]
 ```
 
-RULES:
-1. Keep it SHORT but include ALL credentials and important values EXACTLY as they appear
-2. Include the EXACT text values that need to be typed
-3. Include the EXACT URLs that need to be navigated to
-4. Remove unnecessary details (coordinates, timestamps, etc.)
-5. If there are no credentials, omit that section
-6. The summary should be executable by reading it
+CRITICAL RULES:
+1. NEVER redact, mask, or filter ANY credentials, passwords, emails, or sensitive values
+2. Include ALL credentials and text values EXACTLY as they appear - no asterisks, no [REDACTED]
+3. Include the EXACT text values that need to be typed, even if they look like passwords
+4. Include the EXACT URLs that need to be navigated to
+5. Remove only truly unnecessary details (coordinates, timestamps, etc.)
+6. If there are no credentials, omit that section
+7. The summary MUST contain the actual values needed to execute the workflow
 
 Generate the summary now:"""
 
@@ -125,7 +127,7 @@ Generate the summary now:"""
                 lines = summary.split("\n")
                 summary = "\n".join(lines[1:-1] if lines[-1] == "```" else lines[1:])
             
-            print(f"📝 Generated workflow summary ({len(summary)} chars)")
+            print(f"Generated workflow summary ({len(summary)} chars)")
             return summary
             
         except Exception as e:
@@ -140,7 +142,7 @@ Generate the summary now:"""
     ) -> str:
         """Generate a basic summary without AI if the API call fails."""
         lines = [
-            f"🎯 TASK: {workflow_name}",
+            f"TASK: {workflow_name}",
             "",
         ]
         
@@ -149,7 +151,7 @@ Generate the summary now:"""
             if step.get('action_type') == 'navigate':
                 url = step.get('args', {}).get('url', '')
                 if url:
-                    lines.append(f"🌐 START URL: {url}")
+                    lines.append(f"START URL: {url}")
                     break
         
         # Extract credentials from type_text_at actions
@@ -165,12 +167,12 @@ Generate the summary now:"""
         
         if credentials:
             lines.append("")
-            lines.append("🔐 CREDENTIALS:")
+            lines.append("CREDENTIALS:")
             lines.extend(credentials)
         
         # List steps
         lines.append("")
-        lines.append("📋 EXECUTION STEPS:")
+        lines.append("EXECUTION STEPS:")
         for i, step in enumerate(steps, 1):
             action = step.get('action_type', 'unknown')
             args = step.get('args', {})

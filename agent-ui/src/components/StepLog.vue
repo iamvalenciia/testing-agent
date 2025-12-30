@@ -325,17 +325,17 @@ watch(() => props.steps.length, async () => {
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 /* Base Action Button */
 .action-btn {
-  background: white;
+  background: var(--bg-secondary);
   color: var(--text-primary);
   border: 1px solid var(--border-color);
-  padding: 6px 12px;
-  border-radius: var(--radius-sm);
-  font-size: 0.75rem;
+  padding: 6px 14px;
+  border-radius: var(--radius-md);
+  font-size: 0.8rem;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
@@ -343,7 +343,7 @@ watch(() => props.steps.length, async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 28px;
+  height: 32px;
 }
 
 .action-btn:hover {
@@ -353,7 +353,7 @@ watch(() => props.steps.length, async () => {
 
 /* Save Btn */
 .action-btn.save {
-  background: var(--bg-elevated);
+  background: var(--bg-secondary);
   border-color: var(--accent-primary);
   color: var(--accent-primary);
 }
@@ -361,62 +361,65 @@ watch(() => props.steps.length, async () => {
 .action-btn.save:hover {
   background: var(--accent-primary);
   color: white;
-  box-shadow: var(--shadow-color);
+  box-shadow: var(--shadow-md);
 }
 
 /* Stop Btn */
 .action-btn.stop {
-  background: rgba(239, 68, 68, 0.1);
+  background: var(--error-bg);
   color: var(--error);
-  border-color: rgba(239, 68, 68, 0.3);
+  border-color: var(--error);
 }
 
 .action-btn.stop:hover {
   background: var(--error);
   color: white;
-  box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
+  box-shadow: var(--shadow-md);
 }
 
 /* Download Btn */
 .action-btn.download {
-  background: var(--bg-elevated);
+  background: var(--bg-secondary);
   font-size: 1rem;
-  padding: 0 8px;
+  padding: 0 10px;
+  border-color: var(--border-dark);
 }
 
 .action-btn.download:hover {
-  background: var(--bg-tertiary);
-  color: white;
+  background: var(--accent-soft);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
 }
 
 /* Close Browser Btn */
 .action-btn.close {
-  background: var(--bg-elevated);
+  background: var(--bg-secondary);
   color: var(--text-muted);
   font-size: 0.9rem;
-  padding: 0 8px;
+  padding: 0 10px;
 }
 
 .action-btn.close:hover {
-  background: rgba(239, 68, 68, 0.2);
+  background: var(--error-bg);
   color: var(--error);
-  border-color: rgba(239, 68, 68, 0.3);
+  border-color: var(--error);
 }
 
 /* End Session Btn */
 .action-btn.end-session {
-  background: rgba(220, 38, 38, 0.1);
-  color: #dc2626;
-  border-color: rgba(220, 38, 38, 0.3);
+  background: var(--error-bg);
+  color: var(--error);
+  border-color: var(--error);
   font-weight: 600;
 }
 
 .action-btn.end-session:hover {
-  background: #dc2626;
+  background: var(--error);
   color: white;
-  border-color: #dc2626;
-  box-shadow: 0 0 12px rgba(220, 38, 38, 0.4);
+  border-color: var(--error);
+  box-shadow: var(--shadow-md);
 }
+
 
 /* Dialog Overlay */
 .dialog-overlay {
@@ -463,7 +466,7 @@ watch(() => props.steps.length, async () => {
   left: 0;
   right: 0;
   height: 4px;
-  background: linear-gradient(90deg, #6366f1, #8b5cf6, #a855f7);
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
 }
 
 @keyframes dialogSlideUp {
@@ -512,14 +515,14 @@ watch(() => props.steps.length, async () => {
 .header-icon {
   width: 56px;
   height: 56px;
-  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  background: var(--accent-primary);
   border-radius: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: white;
   flex-shrink: 0;
-  box-shadow: 0 8px 16px -4px rgba(99, 102, 241, 0.4);
+  box-shadow: var(--shadow-md);
 }
 
 .header-text {
@@ -708,13 +711,13 @@ watch(() => props.steps.length, async () => {
   right: -6px;
   width: 24px;
   height: 24px;
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  background: var(--success);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   color: white;
-  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.4);
+  box-shadow: var(--shadow-md);
   animation: popIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -766,21 +769,17 @@ watch(() => props.steps.length, async () => {
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, #6366f1 0%, #7c3aed 100%);
+  background: var(--accent-primary);
   border: none;
   color: white;
-  box-shadow: 
-    0 4px 14px -2px rgba(99, 102, 241, 0.45),
-    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  box-shadow: var(--shadow-md);
   padding: 12px 28px;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: linear-gradient(135deg, #4f46e5 0%, #6d28d9 100%);
+  background: var(--accent-hover);
   transform: translateY(-2px);
-  box-shadow: 
-    0 8px 20px -4px rgba(99, 102, 241, 0.55),
-    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  box-shadow: var(--shadow-lg);
 }
 
 .btn-primary:active:not(:disabled) {
@@ -788,7 +787,7 @@ watch(() => props.steps.length, async () => {
 }
 
 .btn-primary:disabled {
-  background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);
+  background: var(--border-dark);
   cursor: not-allowed;
   box-shadow: none;
   opacity: 0.6;

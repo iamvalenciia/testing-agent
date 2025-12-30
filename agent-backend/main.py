@@ -92,11 +92,24 @@ async def remove_workflow(workflow_id: str):
 
 @app.post("/workflows/save")
 async def save_current_workflow(request: SaveWorkflowRequest):
-    """Save a task's steps as a reusable workflow and index in Pinecone."""
-    if request.task_id not in active_tasks:
-        raise HTTPException(status_code=404, detail="Task not found")
+    """Save a task's steps as a reusable workflow and index in Pinecone.
     
-    task_data = active_tasks[request.task_id]
+    Supports two modes:
+    1. Frontend sends accumulated steps directly (request.steps) - PREFERRED
+    2. Fallback to active_tasks[task_id] for backwards compatibility
+    """
+    # Use accumulated steps from frontend if provided, otherwise fallback to active_tasks
+    if request.steps and len(request.steps) > 0:
+        # Frontend sent accumulated steps directly
+        workflow_steps = request.steps
+        print(f"Using {len(workflow_steps)} accumulated steps from frontend")
+    elif request.task_id in active_tasks:
+        # Fallback to task-specific steps
+        task_data = active_tasks[request.task_id]
+        workflow_steps = task_data.get("steps", [])
+        print(f"Using {len(workflow_steps)} steps from active task {request.task_id}")
+    else:
+        raise HTTPException(status_code=404, detail="No steps found - provide steps in request or valid task_id")
     
     # Extract category from tags (first tag is the category)
     category = request.tags[0] if request.tags else "steps"
@@ -105,7 +118,7 @@ async def save_current_workflow(request: SaveWorkflowRequest):
         id=request.task_id,
         name=request.name,
         description=request.description,
-        steps=task_data.get("steps", []),
+        steps=workflow_steps,
         created_at=datetime.now().isoformat(),
         tags=request.tags,
         category=category,
@@ -147,6 +160,55 @@ async def save_current_workflow(request: SaveWorkflowRequest):
         ).data[0].values
         
         # Upsert to steps-index with execution_summary
+        # Get last step info for additional context
+        last_step = workflow.steps[-1] if workflow.steps else None
+        last_step_description = None
+        last_step_image_description = None
+        
+        if last_step:
+            last_step_description = last_step.reasoning or f"{last_step.action_type} at {last_step.url}"
+            
+            # Generate AI description of the last screenshot (instead of useless local path)
+            if last_step.screenshot_path:
+                try:
+                    from pathlib import Path
+                    from google import genai
+                    from google.genai import types
+                    import base64
+                    
+                    screenshot_path = Path(last_step.screenshot_path)
+                    if screenshot_path.exists():
+                        # Read screenshot and generate description
+                        client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+                        
+                        with open(screenshot_path, "rb") as f:
+                            image_bytes = f.read()
+                        image_b64 = base64.b64encode(image_bytes).decode()
+                        
+                        response = client.models.generate_content(
+                            model="gemini-2.0-flash",
+                            contents=[
+                                types.Content(
+                                    role="user",
+                                    parts=[
+                                        types.Part(text="Describe this screenshot in 1-2 sentences. Focus on what page/screen it shows and any important UI elements visible. Be concise."),
+                                        types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
+                                    ]
+                                )
+                            ],
+                            config=types.GenerateContentConfig(
+                                temperature=0.1,
+                                max_output_tokens=150,
+                            )
+                        )
+                        
+                        if response and response.candidates:
+                            last_step_image_description = response.text.strip()
+                            print(f"Generated image description: {last_step_image_description[:100]}...")
+                except Exception as img_err:
+                    print(f"Could not generate image description: {img_err}")
+                    last_step_image_description = f"Screenshot of {last_step.url or 'unknown page'}"
+        
         pinecone_service.upsert_step(
             action_type=category,
             goal_description=workflow.name,
@@ -157,13 +219,15 @@ async def save_current_workflow(request: SaveWorkflowRequest):
                 "step_count": len(workflow.steps),
                 "tags": workflow.tags,
                 "steps": [s.model_dump() for s in workflow.steps],  # Keep raw steps as backup
-                "execution_summary": execution_summary,  # NEW: AI-generated summary for execution
+                "execution_summary": execution_summary,  # AI-generated summary for execution
+                "last_step_description": last_step_description,  # Description of final step
+                "last_step_image_description": last_step_image_description,  # AI description of what the final screenshot shows
             },
             embedding=embedding,
             efficiency_score=1.0,
         )
         pinecone_indexed = True
-        print(f"✅ Workflow '{workflow.name}' indexed in Pinecone steps-index")
+        print(f"Workflow '{workflow.name}' indexed in Pinecone steps-index")
     except Exception as e:
         print(f"⚠️ Failed to index workflow in Pinecone: {e}")
         import traceback

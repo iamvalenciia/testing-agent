@@ -224,32 +224,31 @@ class HammerIndexer:
         return chunks
     
     def _generate_embeddings(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings using Pinecone's inference API."""
+        """Generate embeddings using Gemini embedding API (768-dim)."""
+        from screenshot_embedder import get_embedder
+        
+        embedder = get_embedder()
         all_embeddings = []
-        batch_size = 50  # API limit
+        batch_size = 50  # Process in batches
         
         total_batches = (len(texts) - 1) // batch_size + 1
         
         for i in range(0, len(texts), batch_size):
             batch = texts[i:i + batch_size]
             batch_num = i // batch_size + 1
-            print(f"   Embedding batch {batch_num}/{total_batches}...")
+            print(f"   Embedding batch {batch_num}/{total_batches} using Gemini...")
             
             try:
-                result = self.pinecone_service.pc.inference.embed(
-                    model="llama-text-embed-v2",
-                    inputs=batch,
-                    parameters={"input_type": "passage"}
-                )
-                
-                for item in result.data:
-                    all_embeddings.append(item.values)
+                for text in batch:
+                    # Use Gemini embedder for each text
+                    embedding = embedder.embed_query(text)
+                    all_embeddings.append(embedding)
                     
             except Exception as e:
                 print(f"   ⚠️ Error in batch {batch_num}: {e}")
-                # Add zero vectors for failed embeddings
+                # Add zero vectors for failed embeddings (768-dim for Gemini)
                 for _ in batch:
-                    all_embeddings.append([0.0] * 1024)
+                    all_embeddings.append([0.0] * 768)
         
         return all_embeddings
     
