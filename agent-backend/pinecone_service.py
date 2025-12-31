@@ -13,6 +13,7 @@ class IndexType(str, Enum):
     HAMMER = "hammer-index"       # Hammer config - resets per ticket
     WORKFLOWS = "steps-index"     # Episodic memory - reuses existing steps-index
     SCREENSHOTS = "screenshots-index"  # Visual search - persistent forever
+    SUCCESS_CASES = "steps-index"  # Reuses steps-index with namespace="success"
     # Deprecated indexes (kept for backwards compatibility)
     JIRA = "jira-index"           # Jira data - deprecated
     ZENDESK = "zendesk-index"     # Zendesk docs - deprecated
@@ -23,7 +24,7 @@ class IndexType(str, Enum):
 RESETTABLE_INDEXES = [IndexType.HAMMER]
 
 # Indexes that persist forever (episodic memory)
-PERSISTENT_INDEXES = [IndexType.WORKFLOWS, IndexType.SCREENSHOTS]
+PERSISTENT_INDEXES = [IndexType.WORKFLOWS, IndexType.SCREENSHOTS]  # SUCCESS_CASES uses steps-index with namespace
 
 
 class PineconeService:
@@ -44,6 +45,7 @@ class PineconeService:
             IndexType.HAMMER: 768,       # gemini-embedding-001
             IndexType.WORKFLOWS: 768,    # gemini-embedding-001
             IndexType.SCREENSHOTS: 768,  # gemini-embedding-001
+            IndexType.SUCCESS_CASES: 768, # gemini-embedding-001
             # Legacy/deprecated indexes (kept at original dims if they exist)
             IndexType.JIRA: 1024,        # deprecated
             IndexType.ZENDESK: 1024,     # deprecated
@@ -58,7 +60,7 @@ class PineconeService:
         """Create active indexes if they don't exist (skip deprecated)."""
         existing = self.pc.list_indexes().names()
         
-        # Only create active indexes, not deprecated ones
+        # Only create active indexes, not deprecated ones (SUCCESS_CASES reuses steps-index)
         active_indexes = [IndexType.HAMMER, IndexType.WORKFLOWS, IndexType.SCREENSHOTS]
         
         for index_type in active_indexes:
@@ -614,6 +616,139 @@ class PineconeService:
         
         # This is a simplified version - in production use metadata filters
         return []
+
+    # ==================== SUCCESS CASES INDEX (reinforcement learning) ====================
+
+    def upsert_success_case(
+        self,
+        goal_text: str,
+        workflow_id: str,
+        workflow_name: str,
+        steps: List[Dict[str, Any]],
+        embedding: List[float],
+        final_url: str = "",
+        company_context: str = "",
+        session_id: str = "",
+        execution_time_ms: int = 0
+    ) -> str:
+        """
+        Store a successful workflow execution for future reference.
+        
+        Args:
+            goal_text: The original user prompt/goal
+            workflow_id: Reference to the workflow in steps-index
+            workflow_name: Human-readable workflow name
+            steps: List of actual steps executed
+            embedding: 768-dim embedding of the goal text
+            final_url: Final URL after execution
+            company_context: Company name if applicable (e.g., "FOX", "Linde")
+            session_id: Session ID for tracking
+            execution_time_ms: Execution duration
+        
+        Returns:
+            The vector ID that was created
+        """
+        import json
+        
+        # Generate unique ID
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+        vector_id = f"success_{timestamp}_{workflow_id[:8]}"
+        
+        # Extract step IDs for reference
+        step_ids = [str(step.get("step_number", i)) for i, step in enumerate(steps)]
+        
+        # Serialize steps
+        steps_json = json.dumps(steps, ensure_ascii=False, default=str)
+        
+        metadata = {
+            "goal_text": goal_text[:500],  # Truncate for Pinecone limits
+            "workflow_id": workflow_id,
+            "workflow_name": workflow_name,
+            "step_ids": ",".join(step_ids),  # Comma-separated for filtering
+            "step_count": len(steps),
+            "actual_steps_json": steps_json[:10000],  # Truncate if too long
+            "final_url": final_url[:500],
+            "company_context": company_context,
+            "session_id": session_id,
+            "execution_time_ms": execution_time_ms,
+            "indexed_at": datetime.now().isoformat(),
+            "is_success": True,
+        }
+        
+        index = self.get_index(IndexType.SUCCESS_CASES)
+        index.upsert(
+            vectors=[{
+                "id": vector_id,
+                "values": embedding,
+                "metadata": metadata
+            }],
+            namespace="success"  # Separate namespace within steps-index
+        )
+        
+        print(f"[SUCCESS] Stored success case: {vector_id} ({workflow_name})")
+        return vector_id
+
+    def find_similar_success_cases(
+        self,
+        query_embedding: List[float],
+        top_k: int = 5,
+        company_filter: str = None
+    ) -> List[Dict]:
+        """
+        Find successful executions similar to the query.
+        
+        Args:
+            query_embedding: Embedding of the goal
+            top_k: Number of results
+            company_filter: Optional filter by company context
+        
+        Returns:
+            List of matching success cases with metadata
+        """
+        filter_dict = None
+        if company_filter:
+            filter_dict = {"company_context": {"$eq": company_filter}}
+        
+        # Query with namespace to only get success cases, not workflow steps
+        index = self.get_index(IndexType.SUCCESS_CASES)
+        results = index.query(
+            vector=query_embedding,
+            top_k=top_k,
+            include_metadata=True,
+            filter=filter_dict,
+            namespace="success"  # Only query success cases namespace
+        )
+        matches = results.matches
+        
+        results = []
+        for match in matches:
+            results.append({
+                "id": match.id,
+                "score": match.score,
+                "goal_text": match.metadata.get("goal_text"),
+                "workflow_id": match.metadata.get("workflow_id"),
+                "workflow_name": match.metadata.get("workflow_name"),
+                "step_count": match.metadata.get("step_count"),
+                "step_ids": match.metadata.get("step_ids", "").split(","),
+                "company_context": match.metadata.get("company_context"),
+                "final_url": match.metadata.get("final_url"),
+                "indexed_at": match.metadata.get("indexed_at"),
+            })
+        
+        return results
+
+    def get_success_cases_stats(self) -> Dict:
+        """Get stats for the success-cases-index."""
+        try:
+            index = self.get_index(IndexType.SUCCESS_CASES)
+            stats = index.describe_index_stats()
+            return {
+                "total_vector_count": stats.total_vector_count,
+                "dimension": stats.dimension,
+                "index_fullness": stats.index_fullness,
+            }
+        except Exception as e:
+            return {"error": str(e)}
 
     # ==================== UTILITY METHODS ====================
 

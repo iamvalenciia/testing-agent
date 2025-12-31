@@ -1,7 +1,7 @@
 <template>
   <section class="chat-panel">
     <header class="chat-header">
-      <h2>💬 Chat</h2>
+      <h2>Chat</h2>
     </header>
 
     <!-- Messages -->

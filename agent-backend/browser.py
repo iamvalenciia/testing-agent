@@ -187,12 +187,45 @@ class BrowserController:
             else:
                 result["warning"] = f"Unimplemented action: {action_name}"
 
-            # Wait for page to stabilize
+            # Wait for page to stabilize - IMPROVED to avoid blank screenshots
             try:
-                await self.page.wait_for_load_state(timeout=5000)
-            except:
+                # First wait for DOM content to be loaded
+                await self.page.wait_for_load_state("domcontentloaded", timeout=5000)
+                
+                # Then try to wait for network to be idle (more reliable for SPAs)
+                try:
+                    await self.page.wait_for_load_state("networkidle", timeout=2000)
+                except:
+                    pass  # Network might not go idle on some pages, that's OK
+                
+                # Smart wait: Check if page has visible content, retry if blank
+                for _ in range(5):  # Max 5 retries, 300ms each = 1.5s max extra
+                    try:
+                        # Check if body has any visible content
+                        body_content = await self.page.evaluate("""
+                            () => {
+                                const body = document.body;
+                                if (!body) return '';
+                                // Check if there's meaningful content (not just loading spinners)
+                                const text = body.innerText || '';
+                                const hasImages = body.querySelectorAll('img').length > 0;
+                                const hasButtons = body.querySelectorAll('button, a, input').length > 0;
+                                // Return indicator of content presence
+                                return (text.trim().length > 50 || hasImages || hasButtons) ? 'content' : 'empty';
+                            }
+                        """)
+                        if body_content == 'content':
+                            break  # Page has content, we're good
+                    except:
+                        pass
+                    await asyncio.sleep(0.3)  # Wait a bit and retry
+                    
+            except Exception as e:
+                print(f"[BROWSER] Load state wait warning: {e}")
                 pass
-            await asyncio.sleep(0.5)
+            
+            # Small final delay for any remaining animations/transitions
+            await asyncio.sleep(0.3)
 
         except Exception as e:
             result["error"] = str(e)

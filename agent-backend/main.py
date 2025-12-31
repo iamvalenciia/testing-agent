@@ -4,11 +4,12 @@ import json
 import config  # Load environment variables from .env
 import uuid
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from models import (
     TaskRequest,
@@ -141,10 +142,10 @@ async def save_current_workflow(request: SaveWorkflowRequest):
             workflow_description=workflow.description,
             steps=steps_as_dicts
         )
-        print(f"✅ Generated execution summary for '{workflow.name}'")
-        print(f"📝 Summary preview:\n{execution_summary[:500]}...")
+        print(f"[OK] Generated execution summary for '{workflow.name}'")
+        print(f"[SUMMARY] Summary preview:\n{execution_summary[:500]}...")
     except Exception as e:
-        print(f"⚠️ Failed to generate workflow summary: {e}")
+        print(f"[WARNING] Failed to generate workflow summary: {e}")
         import traceback
         traceback.print_exc()
     
@@ -229,7 +230,7 @@ async def save_current_workflow(request: SaveWorkflowRequest):
         pinecone_indexed = True
         print(f"Workflow '{workflow.name}' indexed in Pinecone steps-index")
     except Exception as e:
-        print(f"⚠️ Failed to index workflow in Pinecone: {e}")
+        print(f"[WARNING] Failed to index workflow in Pinecone: {e}")
         import traceback
         traceback.print_exc()
     
@@ -268,9 +269,9 @@ async def save_current_workflow(request: SaveWorkflowRequest):
                 screenshot_embeddings_indexed += 1
         
         if screenshot_embeddings_indexed > 0:
-            print(f"✅ Screenshot embeddings indexed: {screenshot_embeddings_indexed}")
+            print(f"[OK] Screenshot embeddings indexed: {screenshot_embeddings_indexed}")
     except Exception as e:
-        print(f"⚠️ Failed to index screenshots: {e}")
+        print(f"[WARNING] Failed to index screenshots: {e}")
         import traceback
         traceback.print_exc()
     
@@ -284,6 +285,93 @@ async def save_current_workflow(request: SaveWorkflowRequest):
         "screenshots_indexed": screenshot_embeddings_indexed,
     }
 
+
+# ==================== SUCCESS CASES ENDPOINTS ====================
+
+class SaveSuccessCaseRequest(BaseModel):
+    """Request model for saving a success case."""
+    goal_text: str
+    workflow_name: str
+    steps: List[Dict]
+    final_url: str = ""
+    company_context: str = ""
+    session_id: str = ""
+    execution_time_ms: int = 0
+
+
+@app.post("/success-cases")
+async def save_success_case(request: SaveSuccessCaseRequest):
+    """Save a successful workflow execution for reinforcement learning."""
+    try:
+        # Generate embedding from goal text
+        embedding = pinecone_service.pc.inference.embed(
+            model="llama-text-embed-v2",
+            inputs=[request.goal_text],
+            parameters={"input_type": "passage"}
+        ).data[0].values
+        
+        # Generate workflow_id from hash of goal
+        import hashlib
+        workflow_id = hashlib.md5(f"{request.goal_text}:{request.workflow_name}".encode()).hexdigest()[:16]
+        
+        # Store success case
+        vector_id = pinecone_service.upsert_success_case(
+            goal_text=request.goal_text,
+            workflow_id=workflow_id,
+            workflow_name=request.workflow_name,
+            steps=request.steps,
+            embedding=embedding,
+            final_url=request.final_url,
+            company_context=request.company_context,
+            session_id=request.session_id,
+            execution_time_ms=request.execution_time_ms,
+        )
+        
+        return {
+            "status": "saved",
+            "id": vector_id,
+            "workflow_id": workflow_id,
+            "step_count": len(request.steps),
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to save success case: {str(e)}")
+
+
+@app.get("/success-cases/search")
+async def search_success_cases(query: str, top_k: int = 5, company: str = None):
+    """Search for similar successful executions."""
+    try:
+        # Generate embedding from query
+        embedding = pinecone_service.pc.inference.embed(
+            model="llama-text-embed-v2",
+            inputs=[query],
+            parameters={"input_type": "query"}
+        ).data[0].values
+        
+        # Search
+        results = pinecone_service.find_similar_success_cases(
+            query_embedding=embedding,
+            top_k=top_k,
+            company_filter=company,
+        )
+        
+        return {
+            "query": query,
+            "count": len(results),
+            "results": results,
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+@app.get("/success-cases/stats")
+async def get_success_cases_stats():
+    """Get statistics for the success cases index."""
+    return pinecone_service.get_success_cases_stats()
 
 
 @app.websocket("/ws/agent")
@@ -320,7 +408,7 @@ async def websocket_agent(websocket: WebSocket):
         session_id=str(uuid.uuid4()),
         created_at=datetime.now().isoformat()
     )
-    print(f"\n🧠 NEW SESSION STARTED: {session_context.session_id}")
+    print(f"\n[SESSION] NEW SESSION STARTED: {session_context.session_id}")
 
     async def send_json(data: dict):
         """Helper to send JSON message."""
@@ -360,7 +448,7 @@ async def websocket_agent(websocket: WebSocket):
                         value_to_remember = remember_match.group(1).strip()
                         session_context.clipboard = value_to_remember
                         session_context.last_copied_values.append(value_to_remember)
-                        print(f"📋 USER MANUALLY SET CLIPBOARD: {value_to_remember}")
+                        print(f"[CLIPBOARD] USER MANUALLY SET CLIPBOARD: {value_to_remember}")
                         await send_json({
                             "type": "status",
                             "status": "idle",
@@ -374,7 +462,7 @@ async def websocket_agent(websocket: WebSocket):
                         key = note_match.group(1).strip()
                         value = note_match.group(2).strip()
                         session_context.important_notes[key] = value
-                        print(f"📌 USER STORED NOTE: {key} = {value}")
+                        print(f"[NOTE] USER STORED NOTE: {key} = {value}")
                         await send_json({
                             "type": "status",
                             "status": "idle",
@@ -428,7 +516,7 @@ async def websocket_agent(websocket: WebSocket):
                         # NOTE: Changed from google.com to about:blank - no more unnecessary searches!
                         initial_url = start_url if start_url else "about:blank"
                         await persistent_browser.start(initial_url)
-                        print(f"🌐 Browser started at: {initial_url}")
+                        print(f"[BROWSER] Browser started at: {initial_url}")
                     
                     # Create agent with PERSISTENT browser AND session context
                     # The session_context is passed in - it lives across all tasks!
@@ -462,7 +550,7 @@ async def websocket_agent(websocket: WebSocket):
                     is_simple_navigation = re.match(simple_nav_pattern, goal, re.IGNORECASE)
                     
                     if is_simple_navigation:
-                        print(f"🔗 Simple URL navigation detected - skipping decomposition")
+                        print(f"[NAV] Simple URL navigation detected - skipping decomposition")
                     else:
                         try:
                             # Initialize goal decomposer with Pinecone service
@@ -471,19 +559,19 @@ async def websocket_agent(websocket: WebSocket):
                             # Check if goal contains multiple tasks
                             execution_plan = decomposer.get_execution_plan(goal)
                             
-                            print(f"\n🧩 GOAL DECOMPOSITION RESULT:")
+                            print(f"\n[DECOMP] GOAL DECOMPOSITION RESULT:")
                             print(f"   Original goal: {goal}")
                             print(f"   Decomposed: {execution_plan['is_decomposed']}")
                             print(f"   Sub-tasks: {execution_plan['subtask_count']}")
                             
                             if execution_plan['is_decomposed'] and execution_plan['subtask_count'] > 1:
                                 # Multiple sub-tasks detected
-                                print(f"📋 EXECUTING {execution_plan['subtask_count']} SUB-TASKS SEQUENTIALLY:")
+                                print(f"[PLAN] EXECUTING {execution_plan['subtask_count']} SUB-TASKS SEQUENTIALLY:")
                                 
                                 for i, subtask in enumerate(execution_plan['subtasks'], 1):
                                     print(f"   {i}. {subtask.action}: {subtask.target}")
                                     if subtask.workflow_match:
-                                        print(f"      ✅ Matched workflow: {subtask.workflow_match.get('goal_description', 'N/A')}")
+                                        print(f"      [OK] Matched workflow: {subtask.workflow_match.get('goal_description', 'N/A')}")
                                 
                                 subtasks_to_execute = execution_plan['subtasks']
                                 
@@ -495,7 +583,7 @@ async def websocket_agent(websocket: WebSocket):
                                 })
                             else:
                                 # Single task - try to match workflow directly
-                                print(f"📋 Single task detected, searching workflow...")
+                                print(f"[PLAN] Single task detected, searching workflow...")
                                 
                                 # Generate embedding
                                 embedding = pinecone_service.pc.inference.embed(
@@ -509,7 +597,7 @@ async def websocket_agent(websocket: WebSocket):
                                 
                                 # Search matches with TIERED thresholds
                                 matches = pinecone_service.find_similar_steps(embedding, top_k=3)
-                                print(f"🔍 DEBUG: Raw matches found: {[(m.get('goal_description'), m.get('score')) for m in matches]}")
+                                print(f"[DEBUG] DEBUG: Raw matches found: {[(m.get('goal_description'), m.get('score')) for m in matches]}")
                                 
                                 # Use tiered matching with keyword fallback
                                 best_match = pinecone_service.get_best_step_for_goal_tiered(
@@ -530,9 +618,9 @@ async def websocket_agent(websocket: WebSocket):
                                             try:
                                                 import ast
                                                 recommended_workflow = ast.literal_eval(raw_details)
-                                                print("🔍 DEBUG: Successfully parsed workflow using ast.literal_eval (legacy format)")
+                                                print("[DEBUG] DEBUG: Successfully parsed workflow using ast.literal_eval (legacy format)")
                                             except Exception as e:
-                                                print(f"⚠️ Failed to parse workflow details: {e}")
+                                                print(f"[WARNING] Failed to parse workflow details: {e}")
                                                 pass
                                     elif isinstance(raw_details, dict):
                                         recommended_workflow = raw_details
@@ -541,10 +629,10 @@ async def websocket_agent(websocket: WebSocket):
                                         workflow_name = recommended_workflow.get("name") or best_match.get("workflow_name") or "Previous Run"
                                         steps = recommended_workflow.get("steps", [])
                                         step_count = len(steps)
-                                        print(f"✅ Context Loaded: '{workflow_name}' with {step_count} steps.")
+                                        print(f"[OK] Context Loaded: '{workflow_name}' with {step_count} steps.")
                                         
                                         # Debug: Show what's in the steps
-                                        print(f"📋 WORKFLOW STEPS DETAIL:")
+                                        print(f"[WORKFLOW] WORKFLOW STEPS DETAIL:")
                                         for i, s in enumerate(steps[:5], 1):  # Show first 5
                                             s_action = s.get("action_type") if isinstance(s, dict) else s.action_type
                                             s_args = s.get("args") if isinstance(s, dict) else s.args
@@ -556,7 +644,7 @@ async def websocket_agent(websocket: WebSocket):
                                             "message": f"loading knowledge from: {workflow_name}"
                                         })
                                 else:
-                                    print(f"⚠️ No workflow match found for: {goal}")
+                                    print(f"[WARNING] No workflow match found for: {goal}")
                         except Exception as e:
                             print(f"Error in goal decomposition: {e}")
                             import traceback
@@ -569,14 +657,14 @@ async def websocket_agent(websocket: WebSocket):
                                 # ==============================================
                                 # SEQUENTIAL SUBTASK EXECUTION
                                 # ==============================================
-                                print(f"\n🚀 EXECUTING {len(subtasks_to_execute)} SUBTASKS SEQUENTIALLY")
+                                print(f"\n[RUN] EXECUTING {len(subtasks_to_execute)} SUBTASKS SEQUENTIALLY")
                                 
                                 total_steps = 0
                                 all_workflows = []
                                 
                                 for i, subtask in enumerate(subtasks_to_execute, 1):
                                     print(f"\n{'='*50}")
-                                    print(f"📌 SUBTASK {i}/{len(subtasks_to_execute)}: {subtask.action}")
+                                    print(f"[SUBTASK] SUBTASK {i}/{len(subtasks_to_execute)}: {subtask.action}")
                                     print(f"   Target: {subtask.target}")
                                     print(f"{'='*50}")
                                     
@@ -614,9 +702,9 @@ async def websocket_agent(websocket: WebSocket):
                                     total_steps += len(workflow.steps)
                                     all_workflows.append(workflow)
                                     
-                                    print(f"   ✅ Subtask {i} completed with {len(workflow.steps)} steps")
+                                    print(f"   [OK] Subtask {i} completed with {len(workflow.steps)} steps")
                                 
-                                print(f"\n🎉 ALL {len(subtasks_to_execute)} SUBTASKS COMPLETED! Total steps: {total_steps}")
+                                print(f"\n[COMPLETE] ALL {len(subtasks_to_execute)} SUBTASKS COMPLETED! Total steps: {total_steps}")
                                 
                                 await send_json({
                                     "type": "completed",
@@ -673,7 +761,7 @@ async def websocket_agent(websocket: WebSocket):
                     # ==============================================
                     # END SESSION - CLEAR ALL MEMORY
                     # ==============================================
-                    print(f"\n🔴 SESSION ENDING: {session_context.session_id}")
+                    print(f"\n[END] SESSION ENDING: {session_context.session_id}")
                     print(f"   Tasks completed: {len(session_context.task_history)}")
                     print(f"   Values copied: {session_context.last_copied_values}")
                     
@@ -703,7 +791,7 @@ async def websocket_agent(websocket: WebSocket):
                         "status": "idle",
                         "message": f"Session ended. Memory cleared. New session: {session_context.session_id}",
                     })
-                    print(f"🧠 NEW SESSION CREATED: {session_context.session_id}")
+                    print(f"[SESSION] NEW SESSION CREATED: {session_context.session_id}")
 
                 elif msg_type == "index_hammer":
                     # ==============================================
@@ -723,7 +811,7 @@ async def websocket_agent(websocket: WebSocket):
                         })
                         continue
                     
-                    print(f"\n📊 INDEXING HAMMER: {os.path.basename(file_path)}")
+                    print(f"\n[INDEX] INDEXING HAMMER: {os.path.basename(file_path)}")
                     
                     await send_json({
                         "type": "status",

@@ -25,14 +25,24 @@
           Save Workflow
         </button>
 
-        <!-- Download Report Button -->
+        <!-- Save Success Case Button -->
         <button 
-          v-if="steps.length > 0"
-          class="action-btn download"
-          @click="$emit('download-report')"
-          title="Download Report"
+          v-if="steps.length > 0 && !isRunning"
+          class="action-btn success"
+          @click="openSuccessDialog"
+          title="Save as successful execution for learning"
         >
-          📥
+          Save Success
+        </button>
+
+        <!-- View History Button -->
+        <button 
+          v-if="steps.length > 0 || messages.length > 0"
+          class="action-btn history"
+          @click="openHistoryViewer"
+          title="View Session History"
+        >
+          History
         </button>
 
         <!-- End Session Button - Closes browser and clears all data -->
@@ -42,7 +52,7 @@
           @click="$emit('end-session')"
           title="End Session - Close browser and clear all data"
         >
-          🛑 End Session
+          End Session
         </button>
       </div>
     </header>
@@ -98,7 +108,7 @@
           
           <div class="form-group">
             <label>
-              <span class="label-icon">📝</span>
+              <span class="label-icon">*</span>
               Workflow Name
             </label>
             <input 
@@ -112,7 +122,7 @@
           
           <div class="form-group">
             <label>
-              <span class="label-icon">📁</span>
+              <span class="label-icon">*</span>
               Category
             </label>
             <div class="category-grid">
@@ -141,7 +151,7 @@
           
           <div class="form-group">
             <label>
-              <span class="label-icon">💬</span>
+              <span class="label-icon">*</span>
               Description 
               <span class="label-optional">(optional)</span>
             </label>
@@ -173,14 +183,136 @@
         </div>
       </div>
     </Teleport>
+
+    <!-- History Viewer Modal -->
+    <Teleport to="body">
+      <div v-if="showHistoryViewer" class="history-overlay" @click.self="closeHistoryViewer">
+        <div class="history-viewer">
+          <!-- Header -->
+          <div class="history-header">
+            <div class="history-title">
+              <span class="history-icon">History</span>
+              <div>
+                <h3>Session History</h3>
+                <p class="history-subtitle">{{ messages.length }} messages · {{ steps.length }} actions</p>
+              </div>
+            </div>
+            <div class="history-actions">
+              <button class="action-btn-small copy" @click="copyHistory" :class="{ copied: justCopied }">
+                {{ justCopied ? 'Copied!' : 'Copy All' }}
+              </button>
+              <button class="history-close" @click="closeHistoryViewer">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M18 6L6 18M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Content -->
+          <div class="history-content">
+            <pre class="history-text" ref="historyTextRef">{{ formattedHistory }}</pre>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Success Case Dialog -->
+    <Teleport to="body">
+      <div v-if="showSuccessDialog" class="dialog-overlay" @click.self="closeSuccessDialog">
+        <div class="dialog-content success-dialog">
+          <!-- Close button -->
+          <button class="dialog-close" @click="closeSuccessDialog">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+          </button>
+
+          <!-- Header -->
+          <div class="dialog-header">
+            <div class="header-icon success-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+              </svg>
+            </div>
+            <div class="header-text">
+              <h3>Save Success Case</h3>
+              <p class="dialog-subtitle">Record this successful execution ({{ steps.length }} steps)</p>
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label>
+              <span class="label-icon">*</span>
+              Goal / Prompt
+            </label>
+            <input 
+              v-model="successGoalText" 
+              type="text" 
+              placeholder="What was the user's request? e.g., 'login and change profile to FOX'"
+              class="form-input"
+              autofocus
+            />
+          </div>
+          
+          <div class="form-group">
+            <label>
+              <span class="label-icon">*</span>
+              Workflow Name
+            </label>
+            <input 
+              v-model="successWorkflowName" 
+              type="text" 
+              placeholder="e.g., Login + Switch Company"
+              class="form-input"
+            />
+          </div>
+          
+          <div class="form-group">
+            <label>
+              Company Context
+              <span class="label-optional">(optional)</span>
+            </label>
+            <input 
+              v-model="successCompanyContext" 
+              type="text" 
+              placeholder="e.g., FOX, Linde, Canon"
+              class="form-input"
+            />
+          </div>
+          
+          <div class="dialog-actions">
+            <button class="btn-secondary" @click="closeSuccessDialog">
+              Cancel
+            </button>
+            <button 
+              class="btn-primary btn-success" 
+              @click="saveSuccessCase"
+              :disabled="!successGoalText || !successWorkflowName || savingSuccess"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+              </svg>
+              {{ savingSuccess ? 'Saving...' : 'Save Success' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </section>
 </template>
 
 <script setup>
-import { ref, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 
 const props = defineProps({
   steps: {
+    type: Array,
+    default: () => []
+  },
+  messages: {
     type: Array,
     default: () => []
   },
@@ -198,9 +330,10 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['save-workflow', 'stop-task', 'download-report', 'close-browser', 'end-session'])
+const emit = defineEmits(['save-workflow', 'stop-task', 'close-browser', 'end-session'])
 
 const stepListRef = ref(null)
+const historyTextRef = ref(null)
 
 // Save dialog state
 const showSaveDialog = ref(false)
@@ -208,29 +341,40 @@ const workflowName = ref('')
 const workflowDescription = ref('')
 const selectedCategory = ref('')
 
+// Success case dialog state
+const showSuccessDialog = ref(false)
+const successGoalText = ref('')
+const successWorkflowName = ref('')
+const successCompanyContext = ref('')
+const savingSuccess = ref(false)
+
+// History viewer state
+const showHistoryViewer = ref(false)
+const justCopied = ref(false)
+
 const categories = [
   { 
     value: 'steps', 
     label: 'Navigation Steps', 
-    icon: '🔄',
+    icon: 'NAV',
     desc: 'Reusable UI navigation'
   },
   { 
     value: 'hammer-indexer', 
     label: 'Hammer Indexer', 
-    icon: '🔨',
+    icon: 'HMR',
     desc: 'Download & index hammer data'
   },
   { 
     value: 'jira-indexer', 
     label: 'Jira Indexer', 
-    icon: '📋',
+    icon: 'JRA',
     desc: 'Fetch & index Jira tickets'
   },
   { 
     value: 'zendesk-indexer', 
     label: 'Zendesk Indexer', 
-    icon: '📚',
+    icon: 'ZEN',
     desc: 'Scrape & index Zendesk docs'
   }
 ]
@@ -245,6 +389,179 @@ function openSaveDialog() {
 function closeSaveDialog() {
   showSaveDialog.value = false
 }
+
+// Success case dialog methods
+function openSuccessDialog() {
+  showSuccessDialog.value = true
+  successGoalText.value = ''
+  successWorkflowName.value = ''
+  successCompanyContext.value = ''
+}
+
+function closeSuccessDialog() {
+  showSuccessDialog.value = false
+}
+
+async function saveSuccessCase() {
+  if (!successGoalText.value || !successWorkflowName.value) return
+  
+  savingSuccess.value = true
+  try {
+    const response = await fetch('http://localhost:8000/success-cases', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        goal_text: successGoalText.value,
+        workflow_name: successWorkflowName.value,
+        steps: props.steps.map(s => s.model_dump ? s.model_dump() : s),
+        final_url: props.steps.length > 0 ? (props.steps[props.steps.length - 1].url || '') : '',
+        company_context: successCompanyContext.value,
+        session_id: props.taskId || '',
+        execution_time_ms: 0,
+      })
+    })
+    
+    if (response.ok) {
+      const result = await response.json()
+      console.log('Success case saved:', result)
+      closeSuccessDialog()
+      // Emit event for toast notification
+      emit('success-saved', result)
+    } else {
+      const error = await response.json()
+      console.error('Failed to save success case:', error)
+      alert('Error: ' + (error.detail || 'Failed to save'))
+    }
+  } catch (err) {
+    console.error('Error saving success case:', err)
+    alert('Error: ' + err.message)
+  } finally {
+    savingSuccess.value = false
+  }
+}
+
+// History viewer methods
+function openHistoryViewer() {
+  showHistoryViewer.value = true
+}
+
+function closeHistoryViewer() {
+  showHistoryViewer.value = false
+}
+
+async function copyHistory() {
+  try {
+    await navigator.clipboard.writeText(formattedHistory.value)
+    justCopied.value = true
+    setTimeout(() => {
+      justCopied.value = false
+    }, 2000)
+  } catch (err) {
+    console.error('Failed to copy:', err)
+  }
+}
+
+// Computed: Formatted history text
+const formattedHistory = computed(() => {
+  const lines = []
+  
+  // Header
+  lines.push('═'.repeat(60))
+  lines.push('  SESSION HISTORY REPORT')
+  lines.push('  Generated: ' + new Date().toLocaleString())
+  if (props.taskId) {
+    lines.push('  Task ID: ' + props.taskId)
+  }
+  lines.push('═'.repeat(60))
+  lines.push('')
+  
+  // Combine messages and steps chronologically
+  const allItems = []
+  
+  // Add messages
+  for (const msg of props.messages) {
+    allItems.push({
+      type: 'message',
+      timestamp: msg.timestamp || '',
+      role: msg.role,
+      content: msg.content
+    })
+  }
+  
+  // Add steps
+  for (const step of props.steps) {
+    const stepData = step.model_dump ? step.model_dump() : step
+    allItems.push({
+      type: 'step',
+      timestamp: stepData.timestamp || '',
+      stepNumber: stepData.step_number,
+      actionType: stepData.action_type,
+      args: stepData.args || {},
+      reasoning: stepData.reasoning || '',
+      url: stepData.url || ''
+    })
+  }
+  
+  // Sort by timestamp if available (rough ordering)
+  // Since timestamps might be in different formats, we just maintain insertion order
+  
+  // MESSAGES SECTION
+  if (props.messages.length > 0) {
+    lines.push('─'.repeat(60))
+    lines.push('  CONVERSATION LOG')
+    lines.push('─'.repeat(60))
+    lines.push('')
+    
+    for (const msg of props.messages) {
+      const roleIcon = msg.role === 'user' ? 'USER' : 
+                       msg.role === 'agent' ? 'AGENT' : 
+                       'SYSTEM'
+      lines.push(`[${msg.timestamp || 'N/A'}] ${roleIcon}`)
+      lines.push(`   ${msg.content}`)
+      lines.push('')
+    }
+  }
+  
+  // ACTIONS SECTION
+  if (props.steps.length > 0) {
+    lines.push('─'.repeat(60))
+    lines.push('  ACTIONS LOG')
+    lines.push('─'.repeat(60))
+    lines.push('')
+    
+    for (const step of props.steps) {
+      const stepData = step.model_dump ? step.model_dump() : step
+      const time = formatTime(stepData.timestamp)
+      const action = formatAction(stepData.action_type)
+      
+      lines.push(`Step ${stepData.step_number}: ${action}`)
+      lines.push(`   Time: ${time || 'N/A'}`)
+      
+      // Format args nicely
+      const args = stepData.args || {}
+      if (Object.keys(args).length > 0) {
+        lines.push(`   Args: ${JSON.stringify(args)}`)
+      }
+      
+      if (stepData.url) {
+        lines.push(`   URL: ${stepData.url}`)
+      }
+      
+      if (stepData.reasoning) {
+        lines.push(`   Reasoning: ${stepData.reasoning}`)
+      }
+      
+      lines.push('')
+    }
+  }
+  
+  // Footer
+  lines.push('═'.repeat(60))
+  lines.push('  END OF REPORT')
+  lines.push('═'.repeat(60))
+  
+  return lines.join('\n')
+})
 
 function saveWorkflow() {
   if (!workflowName.value || !selectedCategory.value) return
@@ -364,6 +681,34 @@ watch(() => props.steps.length, async () => {
   box-shadow: var(--shadow-md);
 }
 
+/* Success Btn - Green theme */
+.action-btn.success {
+  background: var(--bg-secondary);
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.action-btn.success:hover {
+  background: var(--success);
+  color: white;
+  box-shadow: var(--shadow-md);
+}
+
+/* Success Dialog Header Icon */
+.success-icon {
+  background: var(--success) !important;
+}
+
+/* Success Button in Dialog */
+.btn-success {
+  background: var(--success) !important;
+  border-color: var(--success) !important;
+}
+
+.btn-success:hover:not(:disabled) {
+  background: #047857 !important;
+}
+
 /* Stop Btn */
 .action-btn.stop {
   background: var(--error-bg);
@@ -377,15 +722,15 @@ watch(() => props.steps.length, async () => {
   box-shadow: var(--shadow-md);
 }
 
-/* Download Btn */
-.action-btn.download {
+/* History Btn */
+.action-btn.history {
   background: var(--bg-secondary);
   font-size: 1rem;
   padding: 0 10px;
   border-color: var(--border-dark);
 }
 
-.action-btn.download:hover {
+.action-btn.history:hover {
   background: var(--accent-soft);
   border-color: var(--accent-primary);
   color: var(--accent-primary);
@@ -802,5 +1147,172 @@ watch(() => props.steps.length, async () => {
   justify-content: center;
   padding: 30px;
   border-radius: var(--radius-md);
+}
+
+/* =====================================
+   HISTORY VIEWER MODAL STYLES
+   ===================================== */
+
+.history-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.2s ease-out;
+  padding: 40px;
+}
+
+.history-viewer {
+  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 900px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 
+    0 25px 50px -12px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  animation: dialogSlideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.history-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.history-icon {
+  font-size: 1.8rem;
+}
+
+.history-title h3 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #f1f5f9;
+  letter-spacing: -0.01em;
+}
+
+.history-subtitle {
+  margin: 4px 0 0 0;
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+
+.history-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.action-btn-small {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+}
+
+.action-btn-small.copy {
+  background: rgba(99, 102, 241, 0.15);
+  color: #a5b4fc;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.action-btn-small.copy:hover {
+  background: rgba(99, 102, 241, 0.25);
+  color: #c7d2fe;
+  transform: translateY(-1px);
+}
+
+.action-btn-small.copy.copied {
+  background: rgba(34, 197, 94, 0.2);
+  color: #86efac;
+  border-color: rgba(34, 197, 94, 0.4);
+}
+
+.history-close {
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  transition: all 0.2s;
+}
+
+.history-close:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: #fca5a5;
+  transform: rotate(90deg);
+}
+
+.history-content {
+  flex: 1;
+  overflow: auto;
+  padding: 20px;
+  background: #0d1117;
+}
+
+.history-text {
+  margin: 0;
+  padding: 20px;
+  background: transparent;
+  color: #c9d1d9;
+  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  border-radius: 8px;
+  min-height: 300px;
+}
+
+/* Scrollbar styling for history content */
+.history-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.history-content::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+}
+
+.history-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+
+.history-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
 }
 </style>

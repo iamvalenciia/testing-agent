@@ -721,3 +721,116 @@ body {
 .lightbox-nav.next {
   right: -72px;
 }
+
+/* ===== Dark Mode Support ===== */
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Colors - Dark Corporate Theme */
+    --bg-primary: #0f172a;
+    --bg-secondary: #1e293b;
+    --bg-tertiary: #334155;
+    --bg-elevated: #1e293b;
+
+    /* Text */
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+    --text-inverted: #1e293b;
+
+    /* Borders & Effects */
+    --border-color: #334155;
+    --border-dark: #475569;
+    --border-focus: #60a5fa;
+
+    /* Shadows - Deeper for dark mode */
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
+    --shadow-card: 0 1px 3px 0 rgba(0, 0, 0, 0.3), 0 1px 2px 0 rgba(0, 0, 0, 0.2);
+  }
+
+  /* Scrollbar for dark mode */
+  ::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-dark);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+  }
+
+  /* Form inputs in dark mode */
+  .form-input,
+  .form-textarea {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border-color: var(--border-dark);
+  }
+
+  .form-input:focus,
+  .form-textarea:focus {
+    background: var(--bg-secondary);
+  }
+
+  /* Dialog in dark mode */
+  .dialog-content {
+    background: linear-gradient(180deg, rgba(30, 41, 59, 0.98) 0%, rgba(15, 23, 42, 0.98) 100%);
+    border-color: var(--border-dark);
+  }
+
+  /* Category buttons in dark mode */
+  .category-btn {
+    background: var(--bg-tertiary);
+    border-color: var(--border-dark);
+  }
+
+  .category-btn.active {
+    background: var(--accent-soft);
+    border-color: var(--accent-primary);
+  }
+}
+
+/* ===== Status Indicator - Differentiated Colors ===== */
+/* Disconnected - Gray/Red */
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ef4444;
+  /* Red for disconnected */
+}
+
+/* Connected (idle) - Green */
+.status-dot.connected {
+  background: #10b981;
+  /* Emerald green */
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.4);
+}
+
+/* Running - Blue with pulse */
+.status-dot.running {
+  background: #3b82f6;
+  /* Blue */
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.5);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* Status text differentiation */
+.status-indicator {
+  transition: all 0.3s ease;
+}
+
+.status-indicator:has(.running) {
+  background: rgba(59, 130, 246, 0.1);
+  border-color: rgba(59, 130, 246, 0.3);
+  color: #3b82f6;
+}
+
+.status-indicator:has(.connected:not(.running)) {
+  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(16, 185, 129, 0.3);
+  color: #10b981;
+}

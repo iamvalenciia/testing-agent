@@ -109,7 +109,7 @@ class ComputerUseAgent:
             # ==============================================
             # BUILD CONTEXT PROMPT WITH SESSION MEMORY
             # ==============================================
-            print(f"\n🧠 SESSION MEMORY STATE:")
+            print(f"\n[SESSION] MEMORY STATE:")
             print(f"   Clipboard: {self.session_context.clipboard}")
             print(f"   Copied Values History: {self.session_context.last_copied_values}")
             print(f"   Previous Tasks: {len(self.session_context.task_history)}")
@@ -123,80 +123,139 @@ class ComputerUseAgent:
             
             # 1. SESSION MEMORY CONTEXT (HIGHEST PRIORITY)
             context_parts.append("=" * 60)
-            context_parts.append("🧠 SESSION MEMORY - YOU MUST USE THIS INFORMATION")
+            context_parts.append("SESSION MEMORY - YOU MUST USE THIS INFORMATION")
             context_parts.append("=" * 60)
             
             if self.session_context.clipboard:
-                context_parts.append(f"\n📋 CLIPBOARD (last copied value): {self.session_context.clipboard}")
+                context_parts.append(f"\nCLIPBOARD (last copied value): {self.session_context.clipboard}")
                 context_parts.append("   ↳ When user says 'paste', use this value!")
             
             if self.session_context.last_copied_values:
-                context_parts.append(f"\n📝 ALL COPIED VALUES (in order): {self.session_context.last_copied_values}")
+                context_parts.append(f"\nALL COPIED VALUES (in order): {self.session_context.last_copied_values}")
             
             if self.session_context.important_notes:
-                context_parts.append(f"\n📌 IMPORTANT NOTES:")
+                context_parts.append(f"\nIMPORTANT NOTES:")
                 for key, value in self.session_context.important_notes.items():
                     context_parts.append(f"   - {key}: {value}")
             
             if self.session_context.task_history:
-                context_parts.append(f"\n📜 PREVIOUS TASKS IN THIS SESSION:")
+                context_parts.append(f"\nPREVIOUS TASKS IN THIS SESSION:")
                 for i, task in enumerate(self.session_context.task_history[-5:], 1):  # Last 5 tasks
                     context_parts.append(f"   {i}. {task.get('goal', 'N/A')} → Result: {task.get('result', 'completed')}")
             
             if self.session_context.current_url:
-                context_parts.append(f"\n🌐 CURRENT BROWSER URL: {self.session_context.current_url}")
+                context_parts.append(f"\nCURRENT BROWSER URL: {self.session_context.current_url}")
             
             # 2. USER INSTRUCTION HISTORY (for conversational context)
             if len(self.session_context.user_instructions) > 1:
                 context_parts.append("\n" + "=" * 60)
-                context_parts.append("💬 CONVERSATION HISTORY - Follow this flow!")
+                context_parts.append("CONVERSATION HISTORY - Follow this flow!")
                 context_parts.append("=" * 60)
                 for i, instruction in enumerate(self.session_context.user_instructions, 1):
                     context_parts.append(f"   {i}. {instruction}")
             
             # 3. CURRENT USER INSTRUCTION (THIS IS WHAT YOU MUST DO NOW)
             context_parts.append("\n" + "=" * 60)
-            context_parts.append("🎯 CURRENT TASK - DO THIS NOW")
+            context_parts.append("CURRENT TASK - DO THIS NOW")
             context_parts.append("=" * 60)
             context_parts.append(f"\n{goal}")
             
-            # 4. CRITICAL RULES
+            # 4. CRITICAL RULES - INTELLIGENT NAVIGATION
             context_parts.append("\n" + "=" * 60)
-            context_parts.append("⚠️ CRITICAL RULES - NEVER VIOLATE THESE")
+            context_parts.append("CRITICAL RULES - INTELLIGENT NAVIGATION")
             context_parts.append("=" * 60)
             context_parts.append("""
-1. NEVER search on Google or any search engine unless explicitly asked
-2. If user says "paste" or "paste the ID" -> USE THE CLIPBOARD VALUE ABOVE
-3. FOLLOW the user's CURRENT instruction, not old workflows
-4. If you already completed login, DON'T login again
-5. BE EFFICIENT - minimum clicks, no unnecessary actions
-6. When copying text, REMEMBER to store it mentally for future paste commands
-7. COMPLETION MESSAGES MUST BE CONCISE - one short sentence max (e.g. "Logged in successfully." or "Navigated to dashboard.")
+1. STOP ON VISUAL SUCCESS: Trust your EYES (screenshot), not just the URL. If the visual elements of the goal are present (e.g., a dashboard layout, a success message), the task is DONE. Do not click buttons just to force the URL to match a specific string exactly.
+2. POST-ACTION SETTLEMENT: After any major state change (Clicking 'Login', 'Submit', 'Save', or pressing Enter), you MUST pause evaluation for the next step. Redirects take time.
+   - If you just logged in, expect the URL to change (e.g., to include session tokens). This is normal.
+   - Do not "correct" a URL immediately after login unless you are stuck on an error page.
+3. MINIMAL INTERVENTION: If you are 90% sure you are on the right page, STOP. It is better to stop early than to click a random "Home" button that might reset the session context.
+4. CONTEXT AWARENESS: If a saved workflow says "Go to X", but you are ALREADY at X (visually), skip the navigation step.
+5. NO HALLUCINATIONS: Do not invent steps not requested (like uploading photos, clicking extra menus, or "exploring" the UI).
+6. CLIPBOARD USAGE: If user says "paste" or "paste the ID" -> USE THE CLIPBOARD VALUE from session memory above.
+7. NEVER search on Google or any search engine unless explicitly asked.
 """)
             
             # 5. MANDATORY: Previously saved workflow with FULL DETAILS
             if previous_workflow:
                 context_parts.append("\n" + "=" * 60)
-                context_parts.append("🔑 SAVED WORKFLOW - FOLLOW THESE STEPS EXACTLY")
+                context_parts.append("SAVED WORKFLOW - FOLLOW THESE STEPS EXACTLY")
                 context_parts.append("=" * 60)
                 
-                # Check if we have an AI-generated execution summary (preferred)
+                # ALWAYS extract critical data from steps first (URLs, credentials)
+                # This prevents the model from inventing URLs when execution_summary is vague
+                critical_urls = []
+                critical_credentials = []
+                steps_data = []
+                
+                try:
+                    steps_data = previous_workflow.get("steps", []) if isinstance(previous_workflow, dict) else getattr(previous_workflow, 'steps', [])
+                    
+                    for step in steps_data:
+                        if isinstance(step, dict):
+                            s_action = step.get("action_type", "")
+                            s_args = step.get("args", {})
+                            s_url = step.get("url")
+                        else:
+                            s_action = getattr(step, 'action_type', "")
+                            s_args = getattr(step, 'args', {})
+                            s_url = getattr(step, 'url', None)
+                        
+                        # Extract navigation URLs
+                        if s_action == "navigate" and s_args.get("url"):
+                            critical_urls.append(s_args["url"])
+                        elif s_url and "http" in str(s_url):
+                            if s_url not in critical_urls and "about:blank" not in s_url:
+                                critical_urls.append(s_url)
+                        
+                        # Extract credentials (text for type actions)
+                        if "type" in s_action and s_args.get("text"):
+                            text = s_args["text"]
+                            # Capture emails and passwords
+                            if "@" in text or len(text) > 6:
+                                critical_credentials.append({
+                                    "action": s_action,
+                                    "text": text,
+                                    "element_description": s_args.get("element_description", "input field")
+                                })
+                except Exception as e:
+                    print(f"[WARNING] Error extracting critical data: {e}")
+                
+                # MANDATORY: Add critical URLs at the TOP so model NEVER invents them
+                if critical_urls:
+                    context_parts.append("")
+                    context_parts.append("CRITICAL URLs (USE THESE EXACT URLs - DO NOT INVENT):")
+                    for i, url in enumerate(critical_urls, 1):
+                        context_parts.append(f"   {i}. {url}")
+                    context_parts.append("")
+                
+                # MANDATORY: Add credentials
+                if critical_credentials:
+                    context_parts.append("CREDENTIALS (USE EXACTLY AS SHOWN):")
+                    for cred in critical_credentials:
+                        context_parts.append(f"   - {cred['element_description']}: '{cred['text']}'")
+                    context_parts.append("")
+                
+                # Check if we have an AI-generated execution summary
                 execution_summary = previous_workflow.get("execution_summary") if isinstance(previous_workflow, dict) else None
                 
                 if execution_summary:
                     # Use the optimized AI summary
-                    print(f"🚀 Using AI-generated execution summary")
-                    context_parts.append("⚡ AI-Optimized Execution Instructions:")
+                    print(f"Using AI-generated execution summary + extracted critical data")
+                    context_parts.append("Execution Instructions:")
                     context_parts.append("")
                     context_parts.append(execution_summary)
                 else:
                     # Fallback to raw steps (backwards compatibility)
-                    print(f"📋 No execution_summary found, using raw steps")
-                    context_parts.append("⚡ You MUST use the credentials and URLs from this workflow!")
+                    print(f"No execution_summary found, using raw steps")
+                    context_parts.append("GUIDE FOR EXECUTION (Dynamic Visual Relocation):")
+                    context_parts.append("   - Historic coordinates (x, y) have been STRIPPED. You must find these elements again visually.")
+                    context_parts.append("   - Use the 'element_description' or text to locate targets.")
+                    context_parts.append("   - Credentials and text values in the steps below ARE EXACT - use them as shown.")
                     context_parts.append("")
+                    
                     try:
-                        steps_data = previous_workflow.get("steps", []) if isinstance(previous_workflow, dict) else previous_workflow.steps
-                        print(f"📋 DEBUG: Processing {len(steps_data)} steps from workflow")
+                        print(f"DEBUG: Processing {len(steps_data)} steps from workflow")
                         
                         for i, step in enumerate(steps_data, 1):
                             if isinstance(step, dict):
@@ -208,6 +267,11 @@ class ComputerUseAgent:
                                 s_args = step.args
                                 s_url = step.url
                             
+                            # --- AMNESIA SELECTIVA DE COORDENADAS ---
+                            # Creamos una copia de los argumentos y eliminamos coordenadas fijas
+                            # Esto fuerza al modelo a usar 'element_description' y re-calcular x/y visualmente
+                            clean_args = {k: v for k, v in s_args.items() if k not in ['x', 'y', 'y_offset', 'x_offset']}
+                            
                             # Build detailed step info
                             step_info = f"Step {i}: {s_action}"
                             
@@ -215,29 +279,38 @@ class ComputerUseAgent:
                             if s_url:
                                 step_info += f"\n     URL: {s_url}"
                             
-                            # Add ALL args (this includes credentials!)
-                            if s_args:
-                                step_info += f"\n     Args: {s_args}"
+                            # Add CLEAN args (only semantic data, no hard coordinates)
+                            if clean_args:
+                                step_info += f"\n     Args: {clean_args}"
                                 
-                                # Highlight important values
-                                if 'text' in s_args:
-                                    step_info += f"\n     📝 TEXT TO TYPE: '{s_args['text']}'"
-                                if 'url' in s_args:
-                                    step_info += f"\n     🌐 NAVIGATE TO: {s_args['url']}"
+                                # Highlight important values for visual grounding
+                                if 'element_description' in clean_args:
+                                    step_info += f"\n     [LOOK FOR VISUALLY]: '{clean_args['element_description']}'"
+                                elif 'text' in clean_args and s_action == 'click_element':
+                                    step_info += f"\n     [LOOK FOR TEXT]: '{clean_args['text']}'"
+                                
+                                if 'text' in clean_args and 'type' in s_action:
+                                    step_info += f"\n     [TYPE]: '{clean_args['text']}'"
+                                
+                                # Highlight credentials for input fields
+                                if 'text' in clean_args and s_action not in ['click_element']:
+                                    step_info += f"\n     TEXT TO TYPE: '{clean_args['text']}'"
+                                if 'url' in clean_args:
+                                    step_info += f"\n     NAVIGATE TO: {clean_args['url']}"
                             
                             context_parts.append(step_info)
                             context_parts.append("")  # Empty line between steps
                     except Exception as e:
-                        print(f"⚠️ Error processing previous workflow: {e}")
+                        print(f"[WARNING] Error processing previous workflow: {e}")
                         import traceback
                         traceback.print_exc()
                 
                 context_parts.append("=" * 60)
-                context_parts.append("⚠️ EXECUTE THE ABOVE STEPS. Use the EXACT text/credentials shown!")
+                context_parts.append("[IMPORTANT] EXECUTE THE ABOVE STEPS. Use the EXACT text/credentials shown!")
                 context_parts.append("=" * 60)
             
             context_prompt = "\n".join(context_parts)
-            print(f"\n📧 FULL PROMPT TO AGENT (first 2000 chars):\n{context_prompt[:2000]}")
+            print(f"\n[PROMPT] FULL PROMPT TO AGENT (first 2000 chars):\n{context_prompt[:2000]}")
             if len(context_prompt) > 2000:
                 print(f"... [truncated, total length: {len(context_prompt)} chars]")
 
@@ -347,6 +420,15 @@ class ComputerUseAgent:
                         if part.text:
                             reasoning = part.text
                             break
+                    
+                    # --- OBSERVABILITY: Send reasoning/thinking to UI ---
+                    if reasoning:
+                        # Clean up reasoning for display - take first sentence if too long
+                        clean_thought = reasoning.split('.')[0] if len(reasoning) > 100 else reasoning
+                        clean_thought = clean_thought.strip()
+                        if clean_thought:
+                            self._notify_status(TaskStatus.RUNNING, f"Thinking: {clean_thought}...")
+                            print(f"[THINKING]: {clean_thought}")
 
                     # Check for safety decision - auto-acknowledge for now
                     # In a full implementation, you would prompt the user
@@ -362,10 +444,21 @@ class ComputerUseAgent:
                         safety_ack = "true"
                         print(f"Safety decision ({decision_type}): {explanation}")
 
+                    # --- OBSERVABILITY: Send execution log to UI ---
+                    log_message = f"Executing: {action_name}"
+                    if 'element_description' in args:
+                        log_message += f" on '{args['element_description']}'"
+                    elif 'text' in args:
+                        log_message += f" typing '{args['text'][:30]}...'" if len(str(args.get('text', ''))) > 30 else f" typing '{args['text']}'"
+                    elif 'url' in args:
+                        log_message += f" → {args['url']}"
+                    
+                    self._notify_status(TaskStatus.RUNNING, log_message)
+                    print(f"\n{log_message} | Full args: {args}")
+                    
                     # Execute the action (async)
-                    print(f"\n🎬 EXECUTING: {action_name} with args: {args}")
                     result = await self.browser.execute_action(action_name, args)
-                    print(f"   ✅ Result: url={result.get('url', 'N/A')}")
+                    print(f"   [OK] Result: url={result.get('url', 'N/A')}")
                     
                     # ==============================================
                     # UPDATE SESSION CONTEXT AFTER EACH ACTION
@@ -378,7 +471,7 @@ class ComputerUseAgent:
                     if action_name == "key_combination":
                         keys = args.get("keys", "").lower()
                         if "control+c" in keys or "ctrl+c" in keys:
-                            print("📋 COPY DETECTED! Attempting to read clipboard...")
+                            print("[CLIPBOARD] COPY DETECTED! Attempting to read clipboard...")
                             # The actual clipboard content is tricky to get from browser
                             # But we can note that a copy happened
                             # The user should mention what was copied for us to track
@@ -391,7 +484,7 @@ class ComputerUseAgent:
                                     copied_value = id_match.group(1)
                                     self.session_context.clipboard = copied_value
                                     self.session_context.last_copied_values.append(copied_value)
-                                    print(f"   📋 STORED IN CLIPBOARD: {copied_value}")
+                                    print(f"   [CLIPBOARD] STORED IN CLIPBOARD: {copied_value}")
                             
                     # If reasoning mentions copying something specific, store it
                     if reasoning:
@@ -402,7 +495,7 @@ class ComputerUseAgent:
                             if copied_id not in self.session_context.last_copied_values:
                                 self.session_context.clipboard = copied_id
                                 self.session_context.last_copied_values.append(copied_id)
-                                print(f"   📋 EXTRACTED & STORED: {copied_id}")
+                                print(f"   [CLIPBOARD] EXTRACTED & STORED: {copied_id}")
                     
                     # ==============================================
                     # DETECT HAMMER DOWNLOAD (.xlsm click)
@@ -420,7 +513,7 @@ class ComputerUseAgent:
                             mentions_hammer = ".xlsm" in reasoning_lower or "hammer" in reasoning_lower
                         
                         if is_hammer_page and mentions_hammer:
-                            print("📥 HAMMER DOWNLOAD DETECTED!")
+                            print("[DOWNLOAD] HAMMER DOWNLOAD DETECTED!")
                             
                             # Store in session context
                             self.session_context.important_notes["hammer_download_pending"] = "true"
@@ -430,7 +523,7 @@ class ComputerUseAgent:
                             if self.on_status_change:
                                 self.on_status_change(
                                     TaskStatus.RUNNING, 
-                                    "📥 Hammer download detected! Would you like to index this hammer data?"
+                                    "Hammer download detected! Would you like to index this hammer data?"
                                 )
 
                     # Capture screenshot (async)
@@ -460,7 +553,7 @@ class ComputerUseAgent:
                     )
                     self.steps.append(step)
                     self._notify_step(step, screenshot_b64)
-                    print(f"   📸 Step {step_number} recorded")
+                    print(f"   [STEP] Step {step_number} recorded")
 
                     # Build function response - include safety_acknowledgement if needed
                     response_data: Dict[str, Any] = {"url": result.get("url", "")}
@@ -519,7 +612,7 @@ class ComputerUseAgent:
             "timestamp": datetime.now().isoformat(),
         }
         self.session_context.task_history.append(task_summary)
-        print(f"\n✅ TASK COMPLETE. Session has {len(self.session_context.task_history)} tasks in history.")
+        print(f"\n[COMPLETE] TASK COMPLETE. Session has {len(self.session_context.task_history)} tasks in history.")
         print(f"   Clipboard: {self.session_context.clipboard}")
         print(f"   Copied values: {self.session_context.last_copied_values}")
 

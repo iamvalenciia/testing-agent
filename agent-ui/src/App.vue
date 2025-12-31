@@ -4,21 +4,7 @@
     <header class="app-header">
       <h1>Visual Apprentice</h1>
       
-      <!-- Mode Toggle -->
-      <div class="mode-toggle-container">
-        <span class="mode-label" :class="{ active: agentMode === 'student' }">🎓 Student</span>
-        <button 
-          class="mode-toggle-btn"
-          :class="{ teacher: agentMode === 'teacher' }"
-          @click="toggleMode"
-          :title="agentMode === 'student' ? 'Switch to Teacher mode' : 'Switch to Student mode'"
-        >
-          <span class="toggle-track">
-            <span class="toggle-thumb"></span>
-          </span>
-        </button>
-        <span class="mode-label" :class="{ active: agentMode === 'teacher' }">👨‍🏫 Teacher</span>
-      </div>
+
 
       <div class="status-indicator">
         <span 
@@ -50,12 +36,12 @@
         <!-- Bottom Right: Step Log -->
         <StepLog 
           :steps="steps" 
+          :messages="messages"
           :is-running="isRunning"
           :task-id="currentTaskId"
           :has-browser="hasBrowser"
           @save-workflow="handleSaveWorkflow"
           @stop-task="stopTask"
-          @download-report="downloadReport"
           @close-browser="closeBrowser"
           @end-session="endSession"
         />
@@ -85,7 +71,6 @@ const taskStatus = ref('idle')
 const currentTaskId = ref(null)
 const toast = ref(null)
 const hasBrowser = ref(false)
-const agentMode = ref('student')  // 'student' or 'teacher'
 
 let websocket = null
 
@@ -239,39 +224,6 @@ async function handleSaveWorkflow(workflowData) {
 }
 
 
-async function downloadReport() {
-  if (!currentTaskId.value) {
-    showToast('No active task to download', 'error')
-    return
-  }
-  
-  try {
-    showToast('Preparing report...', 'info')
-    const response = await fetch(`http://localhost:8000/reports/${currentTaskId.value}/download`, {
-      method: 'GET',
-    })
-    
-    if (!response.ok) {
-      throw new Error('Failed to generate report')
-    }
-    
-    // Convert to Blob and download
-    const blob = await response.blob()
-    const url = window.URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `report_${currentTaskId.value}.zip`
-    document.body.appendChild(a)
-    a.click()
-    window.URL.revokeObjectURL(url)
-    document.body.removeChild(a)
-    
-    showToast('Report downloaded!', 'success')
-  } catch (err) {
-    showToast(`Error downloading report: ${err.message}`, 'error')
-  }
-}
-
 function stopTask() {
   if (websocket && isRunning.value) {
     websocket.send(JSON.stringify({ type: 'stop' }))
@@ -305,20 +257,7 @@ function endSession() {
   addMessage('system', 'Test session ended. Browser closed and agent memory cleared.')
 }
 
-function toggleMode() {
-  agentMode.value = agentMode.value === 'student' ? 'teacher' : 'student'
-  
-  // Notify backend of mode change
-  if (websocket && isConnected.value) {
-    websocket.send(JSON.stringify({ 
-      type: 'set_mode', 
-      mode: agentMode.value 
-    }))
-  }
-  
-  const modeText = agentMode.value === 'student' ? '🎓 Student' : '👨‍🏫 Teacher'
-  showToast(`Mode: ${modeText}`, 'info')
-}
+
 
 // Lifecycle
 onMounted(() => {
@@ -379,72 +318,5 @@ onUnmounted(() => {
   }
 }
 
-/* Mode Toggle Container */
-.mode-toggle-container {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: var(--bg-tertiary);
-  padding: 6px 16px;
-  border-radius: 24px;
-  border: 1px solid var(--border-color);
-}
 
-.mode-label {
-  font-size: 0.8rem;
-  font-weight: 500;
-  color: var(--text-muted);
-  transition: all 0.25s ease;
-}
-
-.mode-label.active {
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-/* Toggle Button */
-.mode-toggle-btn {
-  position: relative;
-  background: transparent;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  width: 48px;
-  height: 26px;
-}
-
-.toggle-track {
-  display: block;
-  width: 48px;
-  height: 26px;
-  background: var(--success);
-  border-radius: 13px;
-  position: relative;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.15);
-}
-
-.mode-toggle-btn.teacher .toggle-track {
-  background: var(--warning);
-}
-
-.toggle-thumb {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 20px;
-  height: 20px;
-  background: white;
-  border-radius: 50%;
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-}
-
-.mode-toggle-btn.teacher .toggle-thumb {
-  left: 25px;
-}
-
-.mode-toggle-btn:hover .toggle-thumb {
-  transform: scale(1.05);
-}
 </style>
