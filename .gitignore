@@ -49,6 +49,9 @@ dmypy.json
 # =====================================
 # Node.js / JavaScript
 # =====================================
+agent-ui/package-lock.json
+agent-backend/package-lock.json
+agent-backend/node_modules/
 node_modules/
 npm-debug.log*
 yarn-debug.log*
@@ -148,3 +151,5 @@ agent-backend/build/
 agent-backend/__pycache__/
 data/
 tests/
+agent-ui/package-lock.json
+agent-ui/package-lock.json
