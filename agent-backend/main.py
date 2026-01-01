@@ -275,6 +275,55 @@ async def save_current_workflow(request: SaveWorkflowRequest):
         import traceback
         traceback.print_exc()
     
+    # 5. Index in SPARSE index for HYBRID SEARCH (Keyword + Semantic)
+    hybrid_indexed = False
+    try:
+        from hybrid_search import get_hybrid_search_service
+        from config import HYBRID_SEARCH_ENABLED
+        
+        if HYBRID_SEARCH_ENABLED:
+            hybrid_service = get_hybrid_search_service()
+            
+            # Build searchable text combining all relevant fields
+            searchable_parts = [
+                workflow.name,
+                workflow.description,
+                " ".join(workflow.tags) if workflow.tags else "",
+            ]
+            
+            # Add step descriptions for keyword matching
+            for step in workflow.steps[:10]:  # First 10 steps
+                if step.reasoning:
+                    searchable_parts.append(step.reasoning[:200])
+                if step.url:
+                    searchable_parts.append(step.url)
+            
+            searchable_text = " ".join(filter(None, searchable_parts))
+            
+            # Upsert to both dense and sparse indexes
+            dense_count, sparse_count = hybrid_service.hybrid_upsert(
+                dense_index_name="steps-index",
+                records=[{
+                    "id": f"hybrid_{workflow.id}",
+                    "searchable_text": searchable_text,
+                    "metadata": {
+                        "workflow_id": workflow.id,
+                        "workflow_name": workflow.name,
+                        "goal_description": workflow.description,
+                        "tags": workflow.tags,
+                        "step_count": len(workflow.steps),
+                    }
+                }]
+            )
+            
+            hybrid_indexed = sparse_count > 0
+            if hybrid_indexed:
+                print(f"[HYBRID] Workflow indexed for hybrid search (dense={dense_count}, sparse={sparse_count})")
+    except Exception as e:
+        print(f"[WARNING] Failed to index for hybrid search: {e}")
+        import traceback
+        traceback.print_exc()
+    
     return {
         "status": "saved",
         "id": workflow.id,
@@ -283,6 +332,7 @@ async def save_current_workflow(request: SaveWorkflowRequest):
         "pinecone_indexed": pinecone_indexed,
         "has_summary": execution_summary is not None,
         "screenshots_indexed": screenshot_embeddings_indexed,
+        "hybrid_indexed": hybrid_indexed,
     }
 
 

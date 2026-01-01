@@ -14,6 +14,8 @@ class IndexType(str, Enum):
     WORKFLOWS = "steps-index"     # Episodic memory - reuses existing steps-index
     SCREENSHOTS = "screenshots-index"  # Visual search - persistent forever
     SUCCESS_CASES = "steps-index"  # Reuses steps-index with namespace="success"
+    # Sparse indexes for hybrid search (keyword/lexical search)
+    STEPS_SPARSE = "steps-sparse"  # Companion sparse index for steps-index
     # Deprecated indexes (kept for backwards compatibility)
     JIRA = "jira-index"           # Jira data - deprecated
     ZENDESK = "zendesk-index"     # Zendesk docs - deprecated
@@ -25,6 +27,9 @@ RESETTABLE_INDEXES = [IndexType.HAMMER]
 
 # Indexes that persist forever (episodic memory)
 PERSISTENT_INDEXES = [IndexType.WORKFLOWS, IndexType.SCREENSHOTS]  # SUCCESS_CASES uses steps-index with namespace
+
+# Sparse companion indexes for hybrid search
+SPARSE_INDEXES = [IndexType.STEPS_SPARSE]
 
 
 class PineconeService:
@@ -616,6 +621,72 @@ class PineconeService:
         
         # This is a simplified version - in production use metadata filters
         return []
+    
+    def find_similar_steps_hybrid(
+        self,
+        query_text: str,
+        top_k: int = 5,
+        alpha: float = 0.5,
+        keywords: Optional[List[str]] = None
+    ) -> List[Dict]:
+        """
+        Find similar steps using HYBRID SEARCH (Semantic + Keyword).
+        
+        This method combines dense (Gemini) and sparse (BM25) search for
+        better retrieval of workflows, especially when exact terms matter.
+        
+        Args:
+            query_text: Natural language query
+            top_k: Number of results to return
+            alpha: Weight balance (0=all keyword, 1=all semantic, 0.5=balanced)
+            keywords: Optional list of keywords to boost in search
+            
+        Returns:
+            List of matching steps with hybrid scoring
+        """
+        try:
+            from hybrid_search import get_hybrid_search_service
+            
+            hybrid_service = get_hybrid_search_service()
+            results = hybrid_service.search_workflows_hybrid(
+                query_text=query_text,
+                top_k=top_k,
+                alpha=alpha,
+                keywords=keywords
+            )
+            
+            # Transform to match existing format
+            formatted_results = []
+            for r in results:
+                metadata = r.get("metadata", {})
+                formatted_results.append({
+                    "id": r["id"],
+                    "score": r["rrf_score"],  # Use combined RRF score
+                    "dense_score": r["dense_score"],
+                    "sparse_score": r["sparse_score"],
+                    "action_type": metadata.get("action_type"),
+                    "goal_description": metadata.get("goal_description"),
+                    "step_details": metadata.get("step_details"),
+                    "workflow_name": metadata.get("workflow_name"),
+                    "efficiency_score": metadata.get("efficiency_score", 1.0),
+                    "indexed_at": metadata.get("indexed_at"),
+                    "step_group_id": metadata.get("step_group_id"),
+                    "hybrid_ranks": {
+                        "dense": r["dense_rank"],
+                        "sparse": r["sparse_rank"]
+                    }
+                })
+            
+            print(f"[HYBRID] Found {len(formatted_results)} results (alpha={alpha})")
+            return formatted_results
+            
+        except Exception as e:
+            print(f"[HYBRID] Search failed, falling back to dense-only: {e}")
+            # Fallback to regular dense search
+            from screenshot_embedder import get_embedder
+            embedder = get_embedder()
+            embedding = embedder.embed_query(query_text)
+            return self.find_similar_steps(embedding, top_k)
 
     # ==================== SUCCESS CASES INDEX (reinforcement learning) ====================
 

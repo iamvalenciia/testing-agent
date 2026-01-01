@@ -2,6 +2,9 @@
 
 This module uses Gemini to break complex user goals into atomic sub-tasks,
 matches each sub-task to existing indexed workflows, and returns an execution plan.
+
+COST OPTIMIZATION: Uses model_selector for cheapest viable model + skips
+LLM for simple goals that can be pattern-matched.
 """
 import re
 import json
@@ -12,6 +15,7 @@ from google import genai
 from google.genai import types
 
 from config import GOOGLE_API_KEY
+from model_selector import select_model, TaskType
 
 
 @dataclass
@@ -29,11 +33,13 @@ class GoalDecomposer:
     """
     Decomposes complex user goals into executable sub-tasks.
     
+    COST OPTIMIZATION:
+    - Uses model_selector to pick cheapest model (gemini-2.0-flash-lite)
+    - Skips LLM entirely for simple goals via pattern matching
+    
     Uses Gemini to understand user intent and break down combined requests
     like "login and download hammer from western" into atomic steps.
     """
-    
-    MODEL_NAME = "gemini-2.0-flash"  # Fast model for decomposition
     
     # Common action verbs that indicate separate tasks
     ACTION_VERBS = [
@@ -64,22 +70,34 @@ class GoalDecomposer:
         """
         Decompose a complex goal into atomic sub-tasks.
         
+        COST OPTIMIZATION: Tries pattern matching first to avoid LLM calls.
+        
         Args:
             goal: User's natural language goal (e.g., "login and download hammer")
         
         Returns:
             List of SubTask objects, each representing one atomic action
         """
+        # COST OPTIMIZATION: Check if this is a simple goal we can handle without LLM
+        if self._is_simple_goal(goal):
+            print(f"[COST] Skipping LLM - simple goal detected: '{goal[:40]}...'")
+            return [SubTask(
+                action="execute",
+                target=goal,
+                original_phrase=goal,
+                keywords=self._extract_keywords(goal)
+            )]
+        
         # First, try quick pattern-based decomposition
         quick_result = self._quick_decompose(goal)
         if quick_result and len(quick_result) > 1:
-            print(f"🔧 Quick decomposition found {len(quick_result)} sub-tasks")
+            print(f"[COST] Pattern decomposition found {len(quick_result)} sub-tasks (no LLM)")
             return self._enrich_subtasks(quick_result)
         
         # If no obvious decomposition, use AI
         ai_result = self._ai_decompose(goal)
         if ai_result:
-            print(f"🧠 AI decomposition found {len(ai_result)} sub-tasks")
+            print(f"[LLM] AI decomposition found {len(ai_result)} sub-tasks")
             return self._enrich_subtasks(ai_result)
         
         # Fallback: treat as single task
@@ -89,6 +107,32 @@ class GoalDecomposer:
             original_phrase=goal,
             keywords=self._extract_keywords(goal)
         )]
+    
+    def _is_simple_goal(self, goal: str) -> bool:
+        """
+        COST OPTIMIZATION: Detect simple goals that don't need decomposition.
+        
+        Simple goals are single-action requests that can be handled directly.
+        """
+        goal_lower = goal.lower().strip()
+        
+        # Pattern for simple single-action goals
+        simple_patterns = [
+            r'^(click|type|navigate|go to|open|visit)\s+',  # Single actions
+            r'^(login|logout|submit|refresh|reload|back|forward)\s*$',  # One-word actions
+            r'^(scroll|wait|pause)\s*',  # Utility actions
+        ]
+        
+        for pattern in simple_patterns:
+            if re.match(pattern, goal_lower):
+                return True
+        
+        # Check if goal has no conjunctions (simple single task)
+        has_conjunction = any(sep in goal_lower for sep in [' and ', ' then ', ' after '])
+        if not has_conjunction and len(goal.split()) <= 6:
+            return True
+        
+        return False
     
     def _quick_decompose(self, goal: str) -> List[SubTask]:
         """
@@ -149,16 +193,15 @@ Examples:
 - "go to the admin page" → [
     {{"action": "navigate", "target": "admin page", "keywords": ["admin", "page"]}}
   ]
-- "find supplier US66254 and download their documents" → [
-    {{"action": "search", "target": "supplier US66254", "keywords": ["supplier", "US66254", "search"]}},
-    {{"action": "download", "target": "documents", "keywords": ["download", "documents"]}}
-  ]
 
 Return ONLY valid JSON array, no explanation:"""
 
         try:
+            # COST OPTIMIZATION: Use cheapest model for decomposition
+            model_name = select_model(TaskType.DECOMPOSE)
+            
             response = self.client.models.generate_content(
-                model=self.MODEL_NAME,
+                model=model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.1,

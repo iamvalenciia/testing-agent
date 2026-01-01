@@ -3,6 +3,8 @@
 This module takes screenshots and generates vector embeddings that can be
 used for visual similarity search in Pinecone. This enables the agent to
 recognize previously seen screens and retrieve relevant context.
+
+COST OPTIMIZATION: Integrates with cache_service to avoid redundant API calls.
 """
 import base64
 import numpy as np
@@ -12,6 +14,7 @@ from google import genai
 from google.genai import types
 
 from config import GOOGLE_API_KEY
+from cache_service import get_embedding_cache
 
 
 class ScreenshotEmbedder:
@@ -131,6 +134,8 @@ class ScreenshotEmbedder:
         """
         Generate query embedding for text searches against images.
         
+        COST OPTIMIZATION: Uses cache to avoid redundant API calls.
+        
         Use this when you want to search for screenshots using natural language.
         Example: "login page with error message"
         
@@ -140,6 +145,14 @@ class ScreenshotEmbedder:
         Returns:
             768-dimensional embedding vector (normalized)
         """
+        # Check cache first
+        cache = get_embedding_cache()
+        cached = cache.get(query_text, context="query")
+        if cached:
+            print(f"[CACHE] HIT for query: '{query_text[:30]}...'")
+            return cached
+        
+        # Cache miss - call API
         result = self.client.models.embed_content(
             model=self.MODEL_NAME,
             contents=query_text,
@@ -150,7 +163,13 @@ class ScreenshotEmbedder:
         )
         
         embedding = result.embeddings[0].values
-        return self._normalize_embedding(embedding)
+        normalized = self._normalize_embedding(embedding)
+        
+        # Store in cache
+        cache.set(query_text, normalized, context="query")
+        print(f"[CACHE] STORED query: '{query_text[:30]}...'")
+        
+        return normalized
     
     def compute_similarity(self, embedding1: List[float], embedding2: List[float]) -> float:
         """

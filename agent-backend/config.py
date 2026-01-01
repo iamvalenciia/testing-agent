@@ -18,3 +18,8 @@ HEADLESS = os.getenv("HEADLESS", "false").lower() == "true"
 
 # Agent
 MAX_AGENT_TURNS = 20
+
+# Hybrid Search (Semantic + Keyword)
+HYBRID_SEARCH_ENABLED = os.getenv("HYBRID_SEARCH_ENABLED", "true").lower() == "true"
+HYBRID_ALPHA = float(os.getenv("HYBRID_ALPHA", "0.5"))  # 0=all keyword, 1=all semantic
+HYBRID_TOP_K_MULTIPLIER = int(os.getenv("HYBRID_TOP_K_MULTIPLIER", "3"))  # Over-fetch for fusion

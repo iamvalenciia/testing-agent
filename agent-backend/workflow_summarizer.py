@@ -2,6 +2,8 @@
 
 This module takes raw workflow steps and generates a concise, structured
 summary that's optimized for the agent to execute.
+
+COST OPTIMIZATION: Uses model_selector for cheapest viable model.
 """
 import json
 from typing import List, Dict, Any, Optional
@@ -9,11 +11,14 @@ from google import genai
 from google.genai import types
 
 from config import GOOGLE_API_KEY
+from model_selector import select_model, TaskType
 
 
 class WorkflowSummarizer:
     """
     Uses Gemini to create intelligent summaries of workflows.
+    
+    COST OPTIMIZATION: Uses model_selector to pick cheapest model.
     
     The summaries are:
     - Structured and consistent
@@ -21,8 +26,6 @@ class WorkflowSummarizer:
     - Optimized for agent execution
     - Include all credentials and important values
     """
-    
-    MODEL_NAME = "gemini-2.0-flash"  # Fast model for summarization
     
     def __init__(self):
         self.client = genai.Client(api_key=GOOGLE_API_KEY)
@@ -111,8 +114,11 @@ CRITICAL RULES:
 Generate the summary now:"""
 
         try:
+            # COST OPTIMIZATION: Use cheapest model for summarization
+            model_name = select_model(TaskType.SUMMARIZE)
+            
             response = self.client.models.generate_content(
-                model=self.MODEL_NAME,
+                model=model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.1,  # Low temperature for consistency

@@ -77,7 +77,7 @@ Since Pinecone is NOT relational, we maintain relationships through:
 3. SEMANTIC TEXT EMBEDDING:
    ┌────────────────────────────────────────────────────────────────────┐
    │  The VECTOR itself encodes the semantic meaning of the row:        │
-   │                                                                    │
+   │                                                                    │   
    │  Text: "Sheet: Overrides. Question: How to configure X?.           │
    │         Answer: You need to set Y to Z. Category: Settings"        │
    │                     │                                              │

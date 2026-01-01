@@ -103,14 +103,11 @@ class ExcelParser:
             actual_excel_row = header_row + index + 2
             
             # Prepare metadata - filter out empty values and convert to serializable format
-            row_dict = {}
-            for k, v in row.to_dict().items():
-                if v != "" and v is not None:
-                    # Convert any non-serializable types to string
-                    if isinstance(v, (int, float, str, bool)):
-                        row_dict[str(k)] = v
-                    else:
-                        row_dict[str(k)] = str(v)
+            row_dict = {
+                str(k): (v if isinstance(v, (int, float, str, bool)) else str(v))
+                for k, v in row.to_dict().items()
+                if v != "" and v is not None
+            }
             
             chunks.append({
                 "id": chunk_id,

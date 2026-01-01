@@ -54,6 +54,17 @@
           SAVE
         </button>
 
+        <!-- Report Button -->
+        <button 
+          v-if="steps.length > 0 && !isRunning" 
+          class="control-btn report" 
+          @click="openReportModal"
+          title="Generate Session Report"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          REPORT
+        </button>
+
         <!-- Save Success Case -->
         <button 
           v-if="steps.length > 0 && !isRunning" 
@@ -149,6 +160,118 @@
       </div>
     </div>
 
+    <!-- Report Modal -->
+    <div v-if="showReportModal" class="modal-overlay report-modal-overlay" @click.self="closeReportModal">
+      <div class="modal-content glass-panel report-modal">
+        <div class="report-header">
+          <h3>SESSION REPORT</h3>
+          <div class="report-actions">
+            <button class="btn secondary" @click="copyReportToClipboard" title="Copy to Clipboard">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              COPY
+            </button>
+            <button class="btn secondary" @click="downloadReport" title="Download Report">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              DOWNLOAD
+            </button>
+            <button class="btn secondary" @click="closeReportModal">CLOSE</button>
+          </div>
+        </div>
+        
+        <div class="report-content">
+          <!-- Session Info -->
+          <div class="report-section">
+            <h4>SESSION INFORMATION</h4>
+            <div class="report-info-grid">
+              <div class="info-item">
+                <span class="info-label">Session ID</span>
+                <span class="info-value">{{ currentTaskId || 'N/A' }}</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">Session Date</span>
+                <span class="info-value">{{ sessionDate }}</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">Total Steps</span>
+                <span class="info-value">{{ steps.length }}</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">Last Goal</span>
+                <span class="info-value">{{ lastGoal || 'N/A' }}</span>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Mission Control -->
+          <div class="report-section">
+            <h4>MISSION CONTROL <span class="section-count">({{ messages.length }} messages)</span></h4>
+            <div class="report-messages">
+              <div 
+                v-for="msg in messages" 
+                :key="msg.id" 
+                class="report-message"
+                :class="msg.role"
+              >
+                <div class="message-meta">
+                  <span class="message-role">{{ msg.role.toUpperCase() }}</span>
+                  <span class="message-time">{{ msg.timestamp }}</span>
+                </div>
+                <div class="message-content">{{ msg.content }}</div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- System Logs -->
+          <div class="report-section">
+            <h4>SYSTEM LOGS <span class="section-count">({{ steps.length }} steps)</span></h4>
+            <div class="report-steps">
+              <div 
+                v-for="(step, index) in steps" 
+                :key="index" 
+                class="report-step"
+              >
+                <div class="step-header">
+                  <span class="step-number">STEP {{ index + 1 }}</span>
+                  <span class="step-time">{{ step.timestamp }}</span>
+                  <span class="step-id" v-if="step.step_id">ID: {{ step.step_id }}</span>
+                </div>
+                <div class="step-details">
+                  <div class="step-row" v-if="step.action">
+                    <span class="step-label">Action:</span>
+                    <span class="step-value">{{ step.action }}</span>
+                  </div>
+                  <div class="step-row" v-if="step.target">
+                    <span class="step-label">Target:</span>
+                    <span class="step-value">{{ step.target }}</span>
+                  </div>
+                  <div class="step-row" v-if="step.description">
+                    <span class="step-label">Description:</span>
+                    <span class="step-value">{{ step.description }}</span>
+                  </div>
+                  <div class="step-row" v-if="step.value">
+                    <span class="step-label">Value:</span>
+                    <span class="step-value">{{ step.value }}</span>
+                  </div>
+                  <div class="step-row" v-if="step.url">
+                    <span class="step-label">URL:</span>
+                    <span class="step-value url">{{ step.url }}</span>
+                  </div>
+                  <div class="step-row" v-if="step.reasoning">
+                    <span class="step-label">Reasoning:</span>
+                    <span class="step-value">{{ step.reasoning }}</span>
+                  </div>
+                  <div class="step-row" v-if="step.goal_id">
+                    <span class="step-label">Goal ID:</span>
+                    <span class="step-value">{{ step.goal_id }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Image Viewer Modal -->
     <div v-if="zoomedImage" class="modal-overlay image-viewer" @click="zoomedImage = null">
       <img :src="zoomedImage" alt="Screenshot" />
@@ -187,6 +310,10 @@ const showSaveModal = ref(false)
 const saveModalType = ref('workflow') // 'workflow' | 'success'
 const workflowForm = ref({ name: '', description: '' })
 const successForm = ref({ goal_text: '', workflow_name: '', company_context: '' })
+
+// Report Modal State
+const showReportModal = ref(false)
+const sessionDate = ref(new Date().toLocaleString())
 
 let websocket = null
 
@@ -437,6 +564,134 @@ async function submitSuccessCase() {
   } catch (e) {
     showToast('Error: ' + e.message, 'error')
   }
+}
+
+// Report Modal Functions
+function openReportModal() {
+  sessionDate.value = new Date().toLocaleString()
+  showReportModal.value = true
+}
+
+function closeReportModal() {
+  showReportModal.value = false
+}
+
+function generateReportText() {
+  let report = ''
+  
+  // Header
+  report += '='.repeat(60) + '\n'
+  report += 'SESSION REPORT\n'
+  report += '='.repeat(60) + '\n\n'
+  
+  // Session Information
+  report += 'SESSION INFORMATION\n'
+  report += '-'.repeat(30) + '\n'
+  report += `Session ID: ${currentTaskId.value || 'N/A'}\n`
+  report += `Session Date: ${sessionDate.value}\n`
+  report += `Total Steps: ${steps.value.length}\n`
+  report += `Last Goal: ${lastGoal.value || 'N/A'}\n\n`
+  
+  // Execution Summary (NEW - High-level summary of what happened)
+  report += 'EXECUTION SUMMARY\n'
+  report += '-'.repeat(30) + '\n'
+  
+  // Extract key URLs visited
+  const urlsVisited = [...new Set(steps.value.map(s => s.url).filter(Boolean))]
+  if (urlsVisited.length > 0) {
+    report += `URLs Visited: ${urlsVisited.length}\n`
+    urlsVisited.forEach((url, i) => {
+      report += `  ${i + 1}. ${url}\n`
+    })
+  }
+  
+  // Extract action types summary
+  const actionCounts = steps.value.reduce((acc, step) => {
+    const action = step.action_type || step.action || 'unknown'
+    acc[action] = (acc[action] || 0) + 1
+    return acc
+  }, {})
+  
+  report += `\nActions Performed:\n`
+  Object.entries(actionCounts).forEach(([action, count]) => {
+    report += `  - ${action}: ${count} time(s)\n`
+  })
+  
+  // Determine final status
+  const lastMessage = messages.value[messages.value.length - 1]
+  const finalStatus = lastMessage?.content?.includes('Complete') ? 'SUCCESS' : 
+                      lastMessage?.content?.includes('Error') ? 'FAILED' : 'COMPLETED'
+  report += `\nFinal Status: ${finalStatus}\n\n`
+  
+  // Mission Control - Strategic Messages Only (filtered)
+  report += 'MISSION CONTROL (Strategic Events)\n'
+  report += '-'.repeat(30) + '\n'
+  
+  // Filter messages to show only strategic/meaningful ones
+  const strategicMessages = messages.value.filter(msg => {
+    const content = msg.content.toLowerCase()
+    // Skip low-level execution messages
+    if (content.startsWith('executing:')) return false
+    if (content.startsWith('thinking:')) return false
+    // Keep system messages
+    if (msg.role === 'system') return true
+    // Keep user messages
+    if (msg.role === 'user') return true
+    // Keep meaningful agent messages
+    if (content.includes('complete') || content.includes('error') || 
+        content.includes('starting') || content.includes('subtask') ||
+        content.includes('decomposed') || content.includes('success') ||
+        content.includes('failed') || content.includes('navigating') ||
+        content.includes('loading') || content.includes('credentials') ||
+        content.includes('submitting') || content.includes('changing') ||
+        content.includes('safety') || msg.content.length > 100) return true
+    return false
+  })
+  
+  strategicMessages.forEach(msg => {
+    const roleLabel = msg.role === 'system' ? 'SYS' : 
+                      msg.role === 'user' ? 'USR' : 'AGT'
+    report += `[${msg.timestamp}] [${roleLabel}] ${msg.content}\n\n`
+  })
+  
+  // System Logs - Full Technical Details
+  report += '\nSYSTEM LOGS (Technical Details)\n'
+  report += '-'.repeat(30) + '\n'
+  steps.value.forEach((step, index) => {
+    report += `\n--- STEP ${index + 1} ---\n`
+    report += `Timestamp: ${step.timestamp}\n`
+    if (step.url) report += `URL: ${step.url}\n`
+    if (step.reasoning) report += `Reasoning: ${step.reasoning}\n`
+  })
+  
+  report += '\n' + '='.repeat(60) + '\n'
+  report += 'END OF REPORT\n'
+  report += '='.repeat(60) + '\n'
+  
+  return report
+}
+
+function copyReportToClipboard() {
+  const reportText = generateReportText()
+  navigator.clipboard.writeText(reportText).then(() => {
+    showToast('Report copied to clipboard', 'success')
+  }).catch(() => {
+    showToast('Failed to copy report', 'error')
+  })
+}
+
+function downloadReport() {
+  const reportText = generateReportText()
+  const blob = new Blob([reportText], { type: 'text/plain' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `session-report-${currentTaskId.value || 'unknown'}-${new Date().toISOString().slice(0,10)}.txt`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+  showToast('Report downloaded', 'success')
 }
 
 // Lifecycle
@@ -829,5 +1084,235 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
+}
+
+/* Report Button Style */
+.control-btn.report {
+  background: rgba(99, 102, 241, 0.1);
+  border-color: rgba(99, 102, 241, 0.3);
+  color: #818cf8;
+}
+
+.control-btn.report:hover {
+  background: rgba(99, 102, 241, 0.2);
+}
+
+/* Report Modal */
+.report-modal-overlay {
+  z-index: 150;
+}
+
+.report-modal {
+  width: 90%;
+  max-width: 900px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.report-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 1rem;
+}
+
+.report-header h3 {
+  font-size: 0.9rem;
+  letter-spacing: 2px;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.report-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.report-actions .btn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.report-content {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+}
+
+.report-section {
+  margin-bottom: 1.5rem;
+}
+
+.report-section h4 {
+  font-size: 0.7rem;
+  letter-spacing: 1.5px;
+  color: var(--text-primary);
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.report-section h4 .section-count {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.report-info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+}
+
+.info-item {
+  background: var(--bg-primary);
+  padding: 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.info-label {
+  display: block;
+  font-size: 0.6rem;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 0.25rem;
+}
+
+.info-value {
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', monospace;
+  word-break: break-all;
+}
+
+.report-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.report-message {
+  background: var(--bg-primary);
+  padding: 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.report-message.user {
+  border-left: 3px solid #818cf8;
+}
+
+.report-message.agent {
+  border-left: 3px solid var(--success);
+}
+
+.report-message.system {
+  border-left: 3px solid var(--text-muted);
+}
+
+.message-meta {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.message-role {
+  font-size: 0.6rem;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.message-time {
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.message-content {
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.report-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.report-step {
+  background: var(--bg-primary);
+  padding: 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.step-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.step-number {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: #818cf8;
+}
+
+.step-time {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.step-id {
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+  margin-left: auto;
+}
+
+.step-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.step-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.step-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  min-width: 80px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.step-value {
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  flex: 1;
+  word-break: break-word;
+}
+
+.step-value.url {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
 }
 </style>

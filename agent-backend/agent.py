@@ -1,4 +1,7 @@
-"""Gemini Computer Use Agent Loop (Async version) with Session Memory."""
+"""Gemini Computer Use Agent Loop (Async version) with Session Memory.
+
+COST OPTIMIZATION: Implements context window sliding to prevent token explosion.
+"""
 import re
 import uuid
 from datetime import datetime
@@ -18,11 +21,16 @@ class ComputerUseAgent:
     """
     Agent that uses Gemini 2.5 Computer Use to control a browser.
     
+    COST OPTIMIZATION:
+    - Uses context window sliding to prevent token explosion
+    - Compresses prompts while preserving critical information
+    
     NOW WITH SESSION MEMORY: Maintains context across multiple tasks
     within the same user session (until "End Session" is pressed).
     """
 
     MODEL_NAME = "gemini-2.5-computer-use-preview-10-2025"
+    MAX_CONTEXT_TURNS = 10  # COST OPTIMIZATION: Keep only last N turns to prevent token explosion
 
     def __init__(
         self,
@@ -421,14 +429,10 @@ class ComputerUseAgent:
                             reasoning = part.text
                             break
                     
-                    # --- OBSERVABILITY: Send reasoning/thinking to UI ---
+                    # --- OBSERVABILITY: Send reasoning/thinking to console only (not Mission Control) ---
+                    # The full reasoning is captured in step.reasoning and shown in SYSTEM LOGS
                     if reasoning:
-                        # Clean up reasoning for display - take first sentence if too long
-                        clean_thought = reasoning.split('.')[0] if len(reasoning) > 100 else reasoning
-                        clean_thought = clean_thought.strip()
-                        if clean_thought:
-                            self._notify_status(TaskStatus.RUNNING, f"Thinking: {clean_thought}...")
-                            print(f"[THINKING]: {clean_thought}")
+                        print(f"[THINKING]: {reasoning[:150]}..." if len(reasoning) > 150 else f"[THINKING]: {reasoning}")
 
                     # Check for safety decision - auto-acknowledge for now
                     # In a full implementation, you would prompt the user
@@ -443,8 +447,50 @@ class ComputerUseAgent:
                         # Auto-acknowledge all safety decisions
                         safety_ack = "true"
                         print(f"Safety decision ({decision_type}): {explanation}")
+                        # Only notify for actual safety decisions - this is meaningful
+                        if decision_type:
+                            self._notify_status(TaskStatus.RUNNING, f"Safety check: {decision_type}")
 
-                    # --- OBSERVABILITY: Send execution log to UI ---
+                    # --- STRATEGIC MILESTONE DETECTION ---
+                    # Only send meaningful high-level messages to Mission Control
+                    # Low-level "Executing: click_at" messages are NOT sent (they're in SYSTEM LOGS)
+                    
+                    milestone_message = None
+                    
+                    # Detect navigation milestones
+                    if action_name == "navigate" and 'url' in args:
+                        url = args['url']
+                        if 'signin' in url or 'login' in url:
+                            milestone_message = f"Navigating to login..."
+                        elif 'dash' in url:
+                            milestone_message = f"Loading dashboard..."
+                        else:
+                            domain = url.split('/')[2] if len(url.split('/')) > 2 else url
+                            milestone_message = f"Opening {domain}..."
+                    
+                    # Detect credential input (but don't expose password)
+                    elif 'type' in action_name and 'text' in args:
+                        text = args['text']
+                        if '@' in text:
+                            milestone_message = f"Entering credentials..."
+                        elif len(text) > 20 or '.' in text:  # Likely password or long input
+                            milestone_message = None  # Don't announce password entry
+                        else:
+                            milestone_message = None  # Skip small text inputs
+                    
+                    # Detect form submission (click on login/submit buttons)
+                    elif action_name == "click_at" and reasoning:
+                        reason_lower = reasoning.lower()
+                        if any(kw in reason_lower for kw in ['sign in', 'login', 'submit', 'save']):
+                            milestone_message = f"Submitting form..."
+                        elif any(kw in reason_lower for kw in ['switch', 'change', 'select', 'profile']):
+                            milestone_message = f"Changing context..."
+                    
+                    # Only notify if this is a meaningful milestone
+                    if milestone_message:
+                        self._notify_status(TaskStatus.RUNNING, milestone_message)
+                    
+                    # Console logging for debugging (always log all actions)
                     log_message = f"Executing: {action_name}"
                     if 'element_description' in args:
                         log_message += f" on '{args['element_description']}'"
@@ -452,8 +498,6 @@ class ComputerUseAgent:
                         log_message += f" typing '{args['text'][:30]}...'" if len(str(args.get('text', ''))) > 30 else f" typing '{args['text']}'"
                     elif 'url' in args:
                         log_message += f" → {args['url']}"
-                    
-                    self._notify_status(TaskStatus.RUNNING, log_message)
                     print(f"\n{log_message} | Full args: {args}")
                     
                     # Execute the action (async)
@@ -582,6 +626,14 @@ class ComputerUseAgent:
                         parts=[Part(function_response=fr) for fr in function_responses],
                     )
                 )
+                
+                # COST OPTIMIZATION: Sliding window to prevent token explosion
+                # Keep first message (system prompt) + last MAX_CONTEXT_TURNS * 2 messages
+                max_messages = self.MAX_CONTEXT_TURNS * 2  # 2 messages per turn (request + response)
+                if len(contents) > max_messages + 1:  # +1 for initial system prompt
+                    original_length = len(contents)
+                    contents = contents[:1] + contents[-(max_messages):]
+                    print(f"[COST] Context window trimmed: {original_length} -> {len(contents)} messages")
 
             else:
                 # Max turns reached
