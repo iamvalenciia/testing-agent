@@ -260,6 +260,11 @@ Return ONLY valid JSON array, no explanation:"""
         """
         Enrich subtasks with workflow matches from Pinecone.
         
+        Now queries ALL 3 namespaces for better decision-making:
+        - test_execution_steps: Previously executed workflows
+        - test_success_cases: Successful workflow patterns
+        - static_data: User-defined static reference data
+        
         Args:
             subtasks: List of SubTask to enrich
         
@@ -269,28 +274,62 @@ Return ONLY valid JSON array, no explanation:"""
         if not self.pinecone_service:
             return subtasks
         
+        # Namespaces to search (in priority order)
+        SEARCH_NAMESPACES = [
+            "test_execution_steps",
+            "test_success_cases", 
+            "static_data"
+        ]
+        
         for subtask in subtasks:
             try:
                 # Build search query from action + target + keywords
                 search_query = f"{subtask.action} {subtask.target}"
                 
                 # Generate embedding
-                embedding = self.pinecone_service.pc.inference.embed(
-                    model="llama-text-embed-v2",
-                    inputs=[search_query],
-                    parameters={"input_type": "query"}
-                ).data[0].values
+                from screenshot_embedder import get_embedder
+                embedder = get_embedder()
+                embedding = embedder.embed_query(search_query)
                 
-                # Search with TIERED thresholds
-                match = self.pinecone_service.get_best_step_for_goal_tiered(
-                    embedding, 
-                    keywords=subtask.keywords
-                )
+                best_match = None
+                best_score = 0.0
+                source_namespace = None
                 
-                if match:
-                    subtask.workflow_match = match
-                    subtask.match_score = match.get("score", 0.0)
-                    print(f"   ✅ Matched '{subtask.action}' → '{match.get('goal_description', 'N/A')}' (score: {subtask.match_score:.2f})")
+                # Search each namespace and keep the best match
+                for namespace in SEARCH_NAMESPACES:
+                    try:
+                        if namespace == "static_data":
+                            # Static data uses simple query
+                            matches = self.pinecone_service.query_static_data(
+                                query_embedding=embedding,
+                                top_k=3
+                            )
+                            if matches and matches[0].get("score", 0) >= 0.15:
+                                match = matches[0]
+                                # Convert static_data format to workflow format
+                                match["goal_description"] = match.get("data", "")[:100]
+                                if match.get("score", 0) > best_score:
+                                    best_match = match
+                                    best_score = match.get("score", 0)
+                                    source_namespace = namespace
+                        else:
+                            # Regular namespace search
+                            match = self.pinecone_service.get_best_step_for_goal_tiered(
+                                embedding, 
+                                keywords=subtask.keywords,
+                                namespace=namespace
+                            )
+                            if match and match.get("score", 0) > best_score:
+                                best_match = match
+                                best_score = match.get("score", 0)
+                                source_namespace = namespace
+                    except Exception as ns_error:
+                        print(f"   ⚠️ Error searching {namespace}: {ns_error}")
+                
+                if best_match:
+                    subtask.workflow_match = best_match
+                    subtask.match_score = best_score
+                    print(f"   ✅ Matched '{subtask.action}' → '{best_match.get('goal_description', 'N/A')[:50]}' (score: {best_score:.2f}, namespace: {source_namespace})")
                 else:
                     print(f"   ⚠️ No match for '{subtask.action}: {subtask.target}'")
                     

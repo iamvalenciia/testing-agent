@@ -13,7 +13,7 @@ from typing import List, Optional
 from google import genai
 from google.genai import types
 
-from config import GOOGLE_API_KEY
+from config import GOOGLE_API_KEY, EMBEDDING_MODEL, MRL_DIMENSION
 from cache_service import get_embedding_cache
 
 
@@ -21,14 +21,14 @@ class ScreenshotEmbedder:
     """
     Generate multimodal embeddings for screenshots using Gemini.
     
-    Uses the gemini-embedding-001 model which supports:
+    Uses the configured model (default: gemini-embedding-001) which supports:
     - Text embeddings
     - Image embeddings (multimodal)
     - Configurable output dimensions (768, 1536, 3072)
     """
     
-    MODEL_NAME = "gemini-embedding-001"
-    DIMENSION = 768  # Recommended for efficiency (balance of quality/size)
+    MODEL_NAME = EMBEDDING_MODEL
+    DIMENSION = MRL_DIMENSION  # From config, recommended for efficiency (balance of quality/size)
     TASK_TYPE_DOCUMENT = "RETRIEVAL_DOCUMENT"  # For indexing screenshots
     TASK_TYPE_QUERY = "RETRIEVAL_QUERY"  # For searching
     
@@ -99,36 +99,7 @@ class ScreenshotEmbedder:
         # Normalize for cosine similarity accuracy
         return self._normalize_embedding(embedding)
     
-    def embed_image_batch(
-        self, 
-        image_paths: List[str], 
-        contexts: Optional[List[str]] = None
-    ) -> List[List[float]]:
-        """
-        Batch embed multiple screenshots.
-        
-        Args:
-            image_paths: List of paths to screenshot PNG files
-            contexts: Optional list of context strings (same length as image_paths)
-        
-        Returns:
-            List of 768-dimensional embedding vectors
-        """
-        if contexts and len(contexts) != len(image_paths):
-            raise ValueError("contexts must have same length as image_paths")
-        
-        embeddings = []
-        for i, path in enumerate(image_paths):
-            context = contexts[i] if contexts else None
-            try:
-                embedding = self.embed_image(path, include_context=context)
-                embeddings.append(embedding)
-            except Exception as e:
-                print(f"⚠️ Failed to embed {path}: {e}")
-                # Append zero vector for failed embeddings
-                embeddings.append([0.0] * self.DIMENSION)
-        
-        return embeddings
+
     
     def embed_query(self, query_text: str) -> List[float]:
         """
@@ -171,16 +142,7 @@ class ScreenshotEmbedder:
         
         return normalized
     
-    def compute_similarity(self, embedding1: List[float], embedding2: List[float]) -> float:
-        """
-        Compute cosine similarity between two embeddings.
-        
-        Returns:
-            Similarity score between -1 and 1 (higher = more similar)
-        """
-        arr1 = np.array(embedding1)
-        arr2 = np.array(embedding2)
-        return float(np.dot(arr1, arr2) / (np.linalg.norm(arr1) * np.linalg.norm(arr2)))
+
 
 
 # Singleton instance

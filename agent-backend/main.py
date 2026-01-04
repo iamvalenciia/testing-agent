@@ -6,16 +6,31 @@ import uuid
 from datetime import datetime
 from typing import Dict, Optional, List
 from contextlib import asynccontextmanager
+import time
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from prometheus_fastapi_instrumentator import Instrumentator
+
+# Observability imports
+from observability import (
+    log as logger,
+    bind_context,
+    generate_trace_id,
+    WEBSOCKET_CONNECTIONS,
+    WEBSOCKET_MESSAGES,
+    AGENT_TASKS,
+    WORKFLOW_SAVES,
+    SessionMetrics,
+)
 
 from models import (
     TaskRequest,
     TaskResponse,
     TaskStatus,
     SaveWorkflowRequest,
+    SaveStaticDataRequest,
     ActionStep,
     WorkflowRecord,
     SessionContext,
@@ -27,6 +42,12 @@ from pinecone_service import PineconeService, IndexType
 from download_tracker import get_download_tracker
 from hammer_indexer import get_hammer_indexer
 from goal_decomposer import get_goal_decomposer, SubTask
+from hammer_downloader import (
+    get_hammer_downloader, 
+    is_hammer_download_intent, 
+    extract_company_from_goal,
+    parse_companies_from_text
+)
 import os
 
 # Initialize services
@@ -40,9 +61,9 @@ active_tasks: Dict[str, Dict] = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    print("Computer Use Agent Backend starting...")
+    logger.info("app_starting", version="1.0.0")
     yield
-    print("Computer Use Agent Backend shutting down...")
+    logger.info("app_shutting_down")
 
 
 app = FastAPI(
@@ -60,6 +81,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Prometheus HTTP metrics instrumentation
+Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
 
 @app.get("/health")
@@ -103,12 +127,12 @@ async def save_current_workflow(request: SaveWorkflowRequest):
     if request.steps and len(request.steps) > 0:
         # Frontend sent accumulated steps directly
         workflow_steps = request.steps
-        print(f"Using {len(workflow_steps)} accumulated steps from frontend")
+        logger.info("workflow_save_started", step_count=len(workflow_steps), source="frontend")
     elif request.task_id in active_tasks:
         # Fallback to task-specific steps
         task_data = active_tasks[request.task_id]
         workflow_steps = task_data.get("steps", [])
-        print(f"Using {len(workflow_steps)} steps from active task {request.task_id}")
+        logger.info("workflow_save_started", step_count=len(workflow_steps), source="active_task", task_id=request.task_id)
     else:
         raise HTTPException(status_code=404, detail="No steps found - provide steps in request or valid task_id")
     
@@ -152,13 +176,12 @@ async def save_current_workflow(request: SaveWorkflowRequest):
     # 3. Index in Pinecone with BOTH raw steps AND execution summary
     pinecone_indexed = False
     try:
-        # Generate embedding using Pinecone Inference API (llama-text-embed-v2 = 1024 dims)
+        # Generate embedding using Unified Embedder (Gemini)
+        from screenshot_embedder import get_embedder
+        embedder = get_embedder()
+        
         text_to_embed = f"{workflow.name}: {workflow.description}"
-        embedding = pinecone_service.pc.inference.embed(
-            model="llama-text-embed-v2",
-            inputs=[text_to_embed],
-            parameters={"input_type": "passage"}
-        ).data[0].values
+        embedding = embedder.embed_query(text_to_embed)
         
         # Upsert to steps-index with execution_summary
         # Get last step info for additional context
@@ -210,117 +233,34 @@ async def save_current_workflow(request: SaveWorkflowRequest):
                     print(f"Could not generate image description: {img_err}")
                     last_step_image_description = f"Screenshot of {last_step.url or 'unknown page'}"
         
-        pinecone_service.upsert_step(
-            action_type=category,
-            goal_description=workflow.name,
-            step_details={
-                "id": workflow.id,
-                "name": workflow.name,
-                "description": workflow.description,
-                "step_count": len(workflow.steps),
-                "tags": workflow.tags,
-                "steps": [s.model_dump() for s in workflow.steps],  # Keep raw steps as backup
-                "execution_summary": execution_summary,  # AI-generated summary for execution
-                "last_step_description": last_step_description,  # Description of final step
-                "last_step_image_description": last_step_image_description,  # AI description of what the final screenshot shows
-            },
-            embedding=embedding,
-            efficiency_score=1.0,
-        )
-        pinecone_indexed = True
-        print(f"Workflow '{workflow.name}' indexed in Pinecone steps-index")
+        
+        # Upsert with enhanced format (SINGLE SOURCE OF TRUTH)
+        # We no longer use the legacy upsert_step which created duplicate records
+        if request.text or request.urls_visited or request.steps_reference_only:
+            enhanced_record_id = pinecone_service.upsert_workflow_record(
+                workflow_id=workflow.id,
+                name=workflow.name,
+                description=workflow.description,
+                embedding=embedding,
+                namespace=request.namespace,
+                index_name=request.index,
+                text=request.text,
+                urls_visited=request.urls_visited,
+                actions_performed=request.actions_performed,
+                steps_reference_only=request.steps_reference_only,
+                tags=workflow.tags,
+                extra_metadata={
+                    "execution_summary": execution_summary,
+                    "step_count": len(workflow.steps),
+                    "last_step_description": last_step_description,
+                    "last_step_image_description": last_step_image_description,
+                },
+                user_prompts=request.user_prompts  # User chat messages
+            )
+            pinecone_indexed = True
+            print(f"[ENHANCED] Workflow indexed to {request.index}/{request.namespace}")
     except Exception as e:
         print(f"[WARNING] Failed to index workflow in Pinecone: {e}")
-        import traceback
-        traceback.print_exc()
-    
-    # 4. Generate screenshot embeddings and index for visual search
-    screenshot_embeddings_indexed = 0
-    try:
-        from screenshot_embedder import get_embedder
-        from pathlib import Path
-        embedder = get_embedder()
-        
-        for step in workflow.steps:
-            if step.screenshot_path and Path(step.screenshot_path).exists():
-                # Generate context string for better embeddings
-                context = f"Action: {step.action_type}"
-                if step.url:
-                    context += f" | URL: {step.url}"
-                if step.reasoning:
-                    context += f" | {step.reasoning[:200]}"
-                
-                # Generate multimodal embedding
-                embedding = embedder.embed_image(step.screenshot_path, include_context=context)
-                
-                # Store in Pinecone
-                pinecone_service.upsert_screenshot(
-                    workflow_id=workflow.id,
-                    step_number=step.step_number,
-                    embedding=embedding,
-                    metadata={
-                        "workflow_name": workflow.name,
-                        "action_type": step.action_type,
-                        "url": step.url,
-                        "screenshot_path": step.screenshot_path,
-                        "reasoning": step.reasoning[:500] if step.reasoning else None,
-                    }
-                )
-                screenshot_embeddings_indexed += 1
-        
-        if screenshot_embeddings_indexed > 0:
-            print(f"[OK] Screenshot embeddings indexed: {screenshot_embeddings_indexed}")
-    except Exception as e:
-        print(f"[WARNING] Failed to index screenshots: {e}")
-        import traceback
-        traceback.print_exc()
-    
-    # 5. Index in SPARSE index for HYBRID SEARCH (Keyword + Semantic)
-    hybrid_indexed = False
-    try:
-        from hybrid_search import get_hybrid_search_service
-        from config import HYBRID_SEARCH_ENABLED
-        
-        if HYBRID_SEARCH_ENABLED:
-            hybrid_service = get_hybrid_search_service()
-            
-            # Build searchable text combining all relevant fields
-            searchable_parts = [
-                workflow.name,
-                workflow.description,
-                " ".join(workflow.tags) if workflow.tags else "",
-            ]
-            
-            # Add step descriptions for keyword matching
-            for step in workflow.steps[:10]:  # First 10 steps
-                if step.reasoning:
-                    searchable_parts.append(step.reasoning[:200])
-                if step.url:
-                    searchable_parts.append(step.url)
-            
-            searchable_text = " ".join(filter(None, searchable_parts))
-            
-            # Upsert to both dense and sparse indexes
-            dense_count, sparse_count = hybrid_service.hybrid_upsert(
-                dense_index_name="steps-index",
-                records=[{
-                    "id": f"hybrid_{workflow.id}",
-                    "searchable_text": searchable_text,
-                    "metadata": {
-                        "workflow_id": workflow.id,
-                        "workflow_name": workflow.name,
-                        "goal_description": workflow.description,
-                        "tags": workflow.tags,
-                        "step_count": len(workflow.steps),
-                    }
-                }]
-            )
-            
-            hybrid_indexed = sparse_count > 0
-            if hybrid_indexed:
-                print(f"[HYBRID] Workflow indexed for hybrid search (dense={dense_count}, sparse={sparse_count})")
-    except Exception as e:
-        print(f"[WARNING] Failed to index for hybrid search: {e}")
         import traceback
         traceback.print_exc()
     
@@ -331,8 +271,6 @@ async def save_current_workflow(request: SaveWorkflowRequest):
         "category": category,
         "pinecone_indexed": pinecone_indexed,
         "has_summary": execution_summary is not None,
-        "screenshots_indexed": screenshot_embeddings_indexed,
-        "hybrid_indexed": hybrid_indexed,
     }
 
 
@@ -354,11 +292,9 @@ async def save_success_case(request: SaveSuccessCaseRequest):
     """Save a successful workflow execution for reinforcement learning."""
     try:
         # Generate embedding from goal text
-        embedding = pinecone_service.pc.inference.embed(
-            model="llama-text-embed-v2",
-            inputs=[request.goal_text],
-            parameters={"input_type": "passage"}
-        ).data[0].values
+        from screenshot_embedder import get_embedder
+        embedder = get_embedder()
+        embedding = embedder.embed_query(request.goal_text)
         
         # Generate workflow_id from hash of goal
         import hashlib
@@ -394,11 +330,9 @@ async def search_success_cases(query: str, top_k: int = 5, company: str = None):
     """Search for similar successful executions."""
     try:
         # Generate embedding from query
-        embedding = pinecone_service.pc.inference.embed(
-            model="llama-text-embed-v2",
-            inputs=[query],
-            parameters={"input_type": "query"}
-        ).data[0].values
+        from screenshot_embedder import get_embedder
+        embedder = get_embedder()
+        embedding = embedder.embed_query(query)
         
         # Search
         results = pinecone_service.find_similar_success_cases(
@@ -424,6 +358,306 @@ async def get_success_cases_stats():
     return pinecone_service.get_success_cases_stats()
 
 
+# ==================== STATIC DATA ENDPOINTS ====================
+
+@app.post("/static-data")
+async def save_static_data(request: SaveStaticDataRequest):
+    """Save static data to the static_data namespace.
+    
+    This endpoint stores valuable information that rarely changes
+    (credentials, API keys, configuration values, reference data).
+    
+    Security:
+    - Input is sanitized server-side to prevent injection attacks
+    - HTML/JS tags are stripped using bleach
+    - Dangerous patterns (eval, exec, $where, etc.) are rejected
+    - Maximum 10,000 characters allowed
+    """
+    if not request.data or not request.data.strip():
+        raise HTTPException(status_code=400, detail="Data field is required and cannot be empty")
+    
+    try:
+        # Generate embedding for the data
+        from screenshot_embedder import get_embedder
+        embedder = get_embedder()
+        embedding = embedder.embed_query(request.data)
+        
+        # Store in Pinecone (sanitization happens inside upsert_static_data)
+        vector_id = pinecone_service.upsert_static_data(
+            data=request.data,
+            embedding=embedding
+        )
+        
+        return {
+            "status": "saved",
+            "id": vector_id,
+            "char_count": len(request.data),
+            "namespace": "static_data",
+        }
+        
+    except ValueError as ve:
+        # Security validation failed (dangerous pattern detected)
+        raise HTTPException(status_code=400, detail=f"Security validation failed: {str(ve)}")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to save static data: {str(e)}")
+
+
+@app.get("/static-data")
+async def get_all_static_data(limit: int = 20):
+    """Get all static data records."""
+    try:
+        records = pinecone_service.find_all_static_data(limit=limit)
+        return {
+            "count": len(records),
+            "records": records,
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve static data: {str(e)}")
+
+
+# ==================== COMPANIES & HAMMER DOWNLOAD ENDPOINTS ====================
+
+@app.get("/companies")
+async def list_companies():
+    """List all available companies for hammer download."""
+    return {
+        "companies": [
+            {
+                "id": c["id"],
+                "name": c["company_name"],
+                "aliases": c.get("aliases", [])
+            }
+            for c in COMPANIES
+        ],
+        "count": len(COMPANIES),
+    }
+
+
+@app.get("/companies/search")
+async def search_companies(q: str):
+    """
+    Search for a company by name or alias (fuzzy match).
+    
+    Args:
+        q: Search query (e.g., "western", "adobe")
+    """
+    downloader = get_hammer_downloader()
+    match = downloader.find_company(q)
+    
+    if match:
+        return {
+            "found": True,
+            "company": {
+                "id": match["id"],
+                "name": match["company_name"],
+                "aliases": match.get("aliases", [])
+            }
+        }
+    else:
+        return {
+            "found": False,
+            "query": q,
+            "available": [c["company_name"] for c in COMPANIES]
+        }
+
+
+class HammerDownloadRequest(BaseModel):
+    """Request model for hammer download."""
+    company: str  # Company name, ID, or alias
+    clear_existing: bool = True  # Clear hammer-index before indexing
+    auth_cookie: Optional[str] = None  # Optional auth cookie override
+
+
+@app.post("/hammer/download")
+async def download_hammer_direct(request: HammerDownloadRequest):
+    """
+    Download and index a hammer file directly via Graphite API.
+    
+    This bypasses browser automation and directly calls the Graphite
+    history API to fetch the latest hammer file for a company.
+    
+    Args:
+        company: Company name, ID, or alias (e.g., "western", "US66254")
+        clear_existing: If True, clear hammer-index before indexing
+        auth_cookie: Optional authentication cookie
+    """
+    try:
+        # Create downloader with optional auth
+        downloader = get_hammer_downloader(auth_cookie=request.auth_cookie)
+        
+        # Run the download and index pipeline
+        result = await downloader.download_and_index(
+            company_query=request.company,
+            clear_existing=request.clear_existing
+        )
+        
+        if result.get("success"):
+            return {
+                "status": "success",
+                "message": f"Hammer indexed successfully for {result.get('company_name')}",
+                "details": result,
+            }
+        else:
+            raise HTTPException(
+                status_code=400, 
+                detail=result.get("error", "Download failed")
+            )
+            
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Hammer download failed: {str(e)}")
+
+
+@app.get("/hammer/download/status/{company_id}")
+async def get_hammer_download_status(company_id: str):
+    """
+    Get the current hammer index status for a company.
+    
+    Args:
+        company_id: The company ID (e.g., "US66254")
+    """
+    try:
+        # Get hammer index stats
+        stats = pinecone_service.get_hammer_stats()
+        
+        # Try to find latest hammer history for this company
+        downloader = get_hammer_downloader()
+        latest = await downloader.get_latest_hammer_id(company_id)
+        
+        return {
+            "company_id": company_id,
+            "index_stats": stats,
+            "has_data": stats.get("total_vector_count", 0) > 0,
+            "latest_available": {
+                "id": latest.get("_id") if latest else None,
+                "filename": latest.get("originalFilename") if latest else None,
+                "uploaded_at": latest.get("createdAt") if latest else None,
+                "uploaded_by": latest.get("user") if latest else None,
+            } if latest else None,
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/hammer/index-workflow")
+async def index_hammer_workflow_endpoint():
+    """
+    Index the Hammer Download workflow into Pinecone's steps-index.
+    
+    This teaches the agent that when users request hammer downloads,
+    it should use the direct API method instead of browser automation.
+    
+    Run this ONCE after starting the backend.
+    """
+    try:
+        # Define the workflow
+        workflow_data = {
+            "id": "workflow_hammer_download_direct",
+            "name": "Download Hammer File (Direct API)",
+            "description": "Download hammer file from a client using direct API calls. IMPORTANT: This does NOT require browser navigation - use the HammerDownloader API directly.",
+            "category": "hammer",
+            "tags": ["hammer", "download", "api", "index", "xlsm", "western", "digital"],
+            "step_count": 1,
+            "execution_type": "direct_api",
+            "requires_browser": False,  # Critical: tells decomposer to not use browser
+            "execution_summary": """
+CRITICAL: This workflow uses DIRECT API CALLS, not browser automation!
+
+When user requests to download a hammer file from a company:
+1. DO NOT search the web or navigate anywhere
+2. The system automatically calls HammerDownloader.download_and_index()
+3. The hammer file is downloaded via Graphite API and indexed to Pinecone
+
+TRIGGER PHRASES:
+- "download hammer from [company]"
+- "get hammer file from [company]"
+- "descargar hammer de [company]"
+- "download western digital hammer"
+
+COMPANIES: Western Digital (US66254), Adobe-TEST (US1229), Vonage (US5078)
+
+THIS IS AUTOMATIC - NO BROWSER ACTIONS NEEDED!
+""",
+        }
+        
+        # Generate embedding
+        text_to_embed = """
+        download hammer file from company client western digital adobe vonage
+        descargar hammer archivo xlsm de cliente
+        get hammer configuration download automatically api
+        fetch hammer from graphite no browser needed direct api call
+        """
+        
+        # Generate embedding
+        from screenshot_embedder import get_embedder
+        embedder = get_embedder()
+        embedding = embedder.embed_query(text_to_embed)
+        
+        # Upsert main workflow
+        pinecone_service.upsert_step(
+            action_type="hammer_download",
+            goal_description="Download Hammer File from Company (Direct API)",
+            step_details=workflow_data,
+            embedding=embedding,
+            efficiency_score=1.0,
+        )
+        
+        # Also add company-specific variations
+        variations = [
+            ("Download hammer from Western Digital", "download hammer western digital wd US66254 xlsm"),
+            ("Descargar hammer de cliente", "descargar hammer archivo cliente company download spanish"),
+            ("Download hammer to test configuration", "download hammer test new configuration verify changes"),
+        ]
+        
+        for goal, text in variations:
+            emb = embedder.embed_query(text)
+            
+            pinecone_service.upsert_step(
+                action_type="hammer_download",
+                goal_description=goal,
+                step_details={
+                    "id": f"workflow_hammer_{goal.lower().replace(' ', '_')[:30]}",
+                    "name": goal,
+                    "execution_type": "direct_api",
+                    "requires_browser": False,
+                    "parent_workflow": "workflow_hammer_download_direct",
+                },
+                embedding=emb,
+                efficiency_score=1.0,
+            )
+        
+        # Verify it was indexed
+        test_query = "download hammer from western digital"
+        test_emb = embedder.embed_query(test_query)
+        
+        matches = pinecone_service.find_similar_steps(test_emb, top_k=3)
+        
+        return {
+            "status": "success",
+            "message": "Hammer download workflow indexed to Pinecone",
+            "workflows_indexed": 1 + len(variations),
+            "verification": {
+                "test_query": test_query,
+                "matches": [
+                    {"goal": m.get("goal_description", "N/A"), "score": m.get("score", 0)}
+                    for m in matches[:3]
+                ]
+            }
+        }
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to index workflow: {str(e)}")
+
+
 @app.websocket("/ws/agent")
 async def websocket_agent(websocket: WebSocket):
     """
@@ -441,6 +675,8 @@ async def websocket_agent(websocket: WebSocket):
         {"type": "error", "message": "..."}
     """
     await websocket.accept()
+    connection_start = time.time()
+    WEBSOCKET_CONNECTIONS.inc()
     
     agent: Optional[ComputerUseAgent] = None
     task_id: Optional[str] = None
@@ -458,14 +694,31 @@ async def websocket_agent(websocket: WebSocket):
         session_id=str(uuid.uuid4()),
         created_at=datetime.now().isoformat()
     )
-    print(f"\n[SESSION] NEW SESSION STARTED: {session_context.session_id}")
+    
+    # ==============================================
+    # SESSION METRICS - Real-time tracking for UI
+    # ==============================================
+    session_metrics = SessionMetrics(session_id=session_context.session_id)
+    
+    # Bind session context for structured logging
+    bind_context(session_id=session_context.session_id, trace_id=generate_trace_id())
+    logger.info("websocket_connected", remote=str(websocket.client))
 
-    async def send_json(data: dict):
-        """Helper to send JSON message."""
+    async def send_json(data: dict, include_metrics: bool = True):
+        """Helper to send JSON message, optionally including session metrics."""
         try:
             await websocket.send_text(json.dumps(data))
+            WEBSOCKET_MESSAGES.labels(direction="sent", message_type=data.get("type", "unknown")).inc()
+            session_metrics.record_message_sent()
+            
+            # Send metrics update after key events (not for metrics messages themselves)
+            if include_metrics and data.get("type") in ("step", "completed", "error", "status"):
+                await websocket.send_text(json.dumps({
+                    "type": "metrics",
+                    "data": session_metrics.to_dict()
+                }))
         except Exception as e:
-            print(f"Error sending JSON: {e}")
+            logger.warning("websocket_send_error", error=str(e))
 
     try:
         while True:
@@ -477,6 +730,7 @@ async def websocket_agent(websocket: WebSocket):
                 )
                 message = json.loads(data)
                 msg_type = message.get("type")
+                session_metrics.record_message_received()
 
                 if msg_type == "start":
                     goal = message.get("goal", "")
@@ -530,6 +784,7 @@ async def websocket_agent(websocket: WebSocket):
 
                     task_id = str(uuid.uuid4())
                     active_tasks[task_id] = {"steps": [], "status": TaskStatus.PENDING}
+                    session_metrics.record_task_started()
 
                     # Callbacks that send messages directly via WebSocket
                     def on_step(step: ActionStep, screenshot_b64: str):
@@ -544,6 +799,7 @@ async def websocket_agent(websocket: WebSocket):
                             reasoning=step.reasoning,
                         )
                         active_tasks[task_id]["steps"].append(adjusted_step)
+                        session_metrics.record_agent_turn()  # Track each agent step
                         # Use asyncio.create_task to send without blocking
                         asyncio.create_task(send_json({
                             "type": "step",
@@ -557,6 +813,7 @@ async def websocket_agent(websocket: WebSocket):
                             "type": "status",
                             "status": status.value,
                             "message": msg,
+                            "task_id": task_id
                         }))
 
                     # Create persistent browser if not exists
@@ -575,15 +832,11 @@ async def websocket_agent(websocket: WebSocket):
                         on_status_change=on_status_change,
                         browser=persistent_browser,
                         session_context=session_context,  # <-- THE KEY TO MEMORY!
+                        session_metrics=session_metrics,  # <-- REAL-TIME METRICS!
                     )
                     print(f"🤖 Agent created with session context: {session_context.session_id}")
 
-                    await send_json({
-                        "type": "status",
-                        "status": "starting",
-                        "message": f"Task {task_id} starting...",
-                        "task_id": task_id,
-                    })
+
 
                     # Run agent as an async task
                     # Pass empty string if browser already open to avoid navigation
@@ -598,6 +851,109 @@ async def websocket_agent(websocket: WebSocket):
                     # Skip decomposition for simple navigation goals
                     simple_nav_pattern = r'^(go to|navigate to|open|visit)\s+https?://'
                     is_simple_navigation = re.match(simple_nav_pattern, goal, re.IGNORECASE)
+                    
+                    # ==============================================
+                    # HAMMER DOWNLOAD DETECTION - BYPASS BROWSER!
+                    # Uses browser cookies for authenticated API calls
+                    # ==============================================
+                    if is_hammer_download_intent(goal):
+                        print(f"\n[HAMMER] HAMMER DOWNLOAD DETECTED - USING DIRECT API!")
+                        company = extract_company_from_goal(goal)
+                        
+                        if company:
+                            await send_json({
+                                "type": "status",
+                                "status": "running",
+                                "message": f"Downloading hammer from {company} via API...",
+                                "task_id": task_id
+                            })
+                            
+                            try:
+                                # Extract cookies from browser session for authenticated API calls
+                                auth_cookie = None
+                                if persistent_browser and persistent_browser.is_started:
+                                    auth_cookie = await persistent_browser.get_auth_cookies_header()
+                                    if auth_cookie:
+                                        print(f"[AUTH] Using browser session cookies for API auth")
+                                        print(f"[AUTH] Cookie length: {len(auth_cookie)} chars")
+                                    else:
+                                        print(f"[AUTH] WARNING: No cookies found - API may return 401")
+                                        print(f"[AUTH] Make sure to login first before downloading hammer!")
+                                else:
+                                    print(f"[AUTH] WARNING: No browser session - please login first!")
+                                    await send_json({
+                                        "type": "error",
+                                        "message": "Please login first before downloading hammer files"
+                                    })
+                                    continue
+                                
+                                
+                                # Fetch company registry from static_data namespace
+                                print(f"[HAMMER] Fetching company registry from static_data...")
+                                companies_list = []
+                                try:
+                                    static_records = pinecone_service.find_all_static_data(limit=10)
+                                    for record in static_records:
+                                        data = record.get("data", "")
+                                        if data:
+                                            try:
+                                                parsed = json.loads(data) if isinstance(data, str) else data
+                                                if isinstance(parsed, list):
+                                                    # Each item should have company_name, id, etc.
+                                                    companies_list.extend(parsed)
+                                            except json.JSONDecodeError:
+                                                pass  # Skip non-JSON records
+                                    
+                                    if companies_list:
+                                        print(f"[HAMMER] Loaded {len(companies_list)} companies from static_data")
+                                    else:
+                                        print("[HAMMER] WARNING: No companies found in static_data namespace")
+                                        
+                                except Exception as e:
+                                    print(f"[ERROR] Failed to load company registry from static_data: {e}")
+
+                                # Create downloader with browser cookies AND dynamic companies list
+                                downloader = get_hammer_downloader(auth_cookie=auth_cookie, companies=companies_list)
+                                result = await downloader.download_and_index(company)
+                                
+                                if result.get("success"):
+                                    await send_json({
+                                        "type": "status",
+                                        "status": "completed",
+                                        "message": f"Hammer indexed: {result.get('records_count', 0)} records from {result.get('company_name')}"
+                                    })
+                                    await send_json({
+                                        "type": "completed",
+                                        "workflow_id": task_id,
+                                        "step_count": 1,
+                                        "hammer_result": result
+                                    })
+                                    
+                                    # Update session context
+                                    session_context.important_notes["hammer_company"] = result.get("company_name")
+                                    session_context.important_notes["hammer_records"] = str(result.get("records_count", 0))
+                                    session_context.important_notes["hammer_file"] = result.get("filename", "")
+                                else:
+                                    error_msg = result.get("error", "Unknown error")
+                                    # Check if it's an auth error
+                                    if "401" in str(error_msg) or "Unauthorized" in str(error_msg):
+                                        error_msg = "Authentication failed. Please login to Graphite first, then try downloading again."
+                                    await send_json({
+                                        "type": "error",
+                                        "message": f"Hammer download failed: {error_msg}"
+                                    })
+                            except Exception as e:
+                                import traceback
+                                traceback.print_exc()
+                                await send_json({
+                                    "type": "error",
+                                    "message": f"Hammer download error: {str(e)}"
+                                })
+                            
+                            continue  # Skip agent execution - hammer is done!
+                        else:
+                            # Could not extract company, let agent try
+                            print(f"[HAMMER] Could not extract company from goal, falling back to agent")
                     
                     if is_simple_navigation:
                         print(f"[NAV] Simple URL navigation detected - skipping decomposition")
@@ -636,63 +992,114 @@ async def websocket_agent(websocket: WebSocket):
                                 print(f"[PLAN] Single task detected, searching workflow...")
                                 
                                 # Generate embedding
-                                embedding = pinecone_service.pc.inference.embed(
-                                    model="llama-text-embed-v2",
-                                    inputs=[goal],
-                                    parameters={"input_type": "query"}
-                                ).data[0].values
+                                # Generate embedding
+                                from screenshot_embedder import get_embedder
+                                embedder = get_embedder()
+                                embedding = embedder.embed_query(goal)
                                 
                                 # Extract keywords from goal for fallback
                                 keywords = decomposer._extract_keywords(goal)
                                 
                                 # Search matches with TIERED thresholds
-                                matches = pinecone_service.find_similar_steps(embedding, top_k=3)
+                                matches = pinecone_service.find_similar_steps(embedding, top_k=3, namespace="test_execution_steps")
                                 print(f"[DEBUG] DEBUG: Raw matches found: {[(m.get('goal_description'), m.get('score')) for m in matches]}")
                                 
                                 # Use tiered matching with keyword fallback
                                 best_match = pinecone_service.get_best_step_for_goal_tiered(
                                     embedding, 
-                                    keywords=keywords
+                                    keywords=keywords,
+                                    namespace="test_execution_steps"
                                 )
                                 
                                 if best_match:
-                                    print(f"Found existing workflow match: {best_match.get('goal_description')} (score: {best_match.get('score', 'N/A')})")
-                                    # Parse the JSON string back to dict/list
-                                    raw_details = best_match.get("step_details", "{}")
-                                    
-                                    # Handle case where it might be already dict or string
-                                    if isinstance(raw_details, str):
-                                        try:
-                                            recommended_workflow = json.loads(raw_details)
-                                        except:
-                                            try:
-                                                import ast
-                                                recommended_workflow = ast.literal_eval(raw_details)
-                                                print("[DEBUG] DEBUG: Successfully parsed workflow using ast.literal_eval (legacy format)")
-                                            except Exception as e:
-                                                print(f"[WARNING] Failed to parse workflow details: {e}")
-                                                pass
-                                    elif isinstance(raw_details, dict):
-                                        recommended_workflow = raw_details
-
-                                    if recommended_workflow:
-                                        workflow_name = recommended_workflow.get("name") or best_match.get("workflow_name") or "Previous Run"
-                                        steps = recommended_workflow.get("steps", [])
-                                        step_count = len(steps)
-                                        print(f"[OK] Context Loaded: '{workflow_name}' with {step_count} steps.")
+                                    # ==============================================
+                                    # CHECK FORMAT: JSON_V2 (clean JSON) vs TEXT (old) vs LEGACY (step_details)
+                                    # ==============================================
+                                    if best_match.get("format") == "json_v2":
+                                        # JSON_V2 FORMAT - new clean format with JSON strings
+                                        print(f"[JSON_V2 FORMAT] Found workflow (score: {best_match.get('score', 'N/A')})")
+                                        recommended_workflow = {
+                                            "name": f"Previous: {goal}",
+                                            "format": "json_v2",
+                                            "urls_visited": best_match.get("urls_visited", "[]"),
+                                            "actions": best_match.get("actions", "{}"),
+                                            "steps": best_match.get("steps", "[]"),
+                                            "user_prompts": best_match.get("user_prompts", "[]"),
+                                        }
+                                        workflow_name = recommended_workflow["name"]
                                         
-                                        # Debug: Show what's in the steps
-                                        print(f"[WORKFLOW] WORKFLOW STEPS DETAIL:")
-                                        for i, s in enumerate(steps[:5], 1):  # Show first 5
-                                            s_action = s.get("action_type") if isinstance(s, dict) else s.action_type
-                                            s_args = s.get("args") if isinstance(s, dict) else s.args
-                                            print(f"   Step {i}: {s_action} | args={s_args}")
+                                        print(f"[OK] Context Loaded from JSON_V2 FORMAT workflow")
+                                        print(f"   URLs: {best_match.get('urls_visited', '')[:100]}...")
                                         
                                         await send_json({
                                             "type": "status", 
                                             "status": "planning",
-                                            "message": f"loading knowledge from: {workflow_name}"
+                                            "message": f"Found similar workflow (score: {best_match.get('score', 0):.2f})",
+                                            "task_id": task_id
                                         })
+                                    elif best_match.get("user_prompts") or best_match.get("system_logs"):
+                                        # OLD TEXT FORMAT - test_execution_steps namespace
+                                        print(f"[TEXT FORMAT] Found workflow with system_logs (score: {best_match.get('score', 'N/A')})")
+                                        recommended_workflow = {
+                                            "name": f"Previous: {goal}",
+                                            "format": "new",
+                                            "urls_visited": best_match.get("urls_visited", ""),
+                                            "actions_performed": best_match.get("actions_performed", ""),
+                                            "system_logs": best_match.get("system_logs", ""),
+                                            "user_prompts": best_match.get("user_prompts", ""),
+                                        }
+                                        workflow_name = recommended_workflow["name"]
+                                        
+                                        # Show preview of what was found
+                                        print(f"[OK] Context Loaded from TEXT FORMAT workflow")
+                                        print(f"   URLs visited: {best_match.get('urls_visited', '')[:200]}...")
+                                        print(f"   Actions: {best_match.get('actions_performed', '')[:200]}...")
+                                        
+                                        await send_json({
+                                            "type": "status", 
+                                            "status": "planning",
+                                            "message": f"Found similar workflow (score: {best_match.get('score', 0):.2f})",
+                                            "task_id": task_id
+                                        })
+                                    else:
+                                        # OLD FORMAT - parse step_details JSON
+                                        print(f"[OLD FORMAT] Found workflow match: {best_match.get('goal_description')} (score: {best_match.get('score', 'N/A')})")
+                                        raw_details = best_match.get("step_details", "{}")
+                                        
+                                        # Handle case where it might be already dict or string
+                                        if isinstance(raw_details, str):
+                                            try:
+                                                recommended_workflow = json.loads(raw_details)
+                                            except:
+                                                try:
+                                                    import ast
+                                                    recommended_workflow = ast.literal_eval(raw_details)
+                                                    print("[DEBUG] Successfully parsed workflow using ast.literal_eval (legacy format)")
+                                                except Exception as e:
+                                                    print(f"[WARNING] Failed to parse workflow details: {e}")
+                                                    pass
+                                        elif isinstance(raw_details, dict):
+                                            recommended_workflow = raw_details
+
+                                        if recommended_workflow:
+                                            workflow_name = recommended_workflow.get("name") or best_match.get("workflow_name") or "Previous Run"
+                                            steps = recommended_workflow.get("steps", [])
+                                            step_count = len(steps)
+                                            print(f"[OK] Context Loaded: '{workflow_name}' with {step_count} steps.")
+                                            
+                                            # Debug: Show what's in the steps
+                                            print(f"[WORKFLOW] WORKFLOW STEPS DETAIL:")
+                                            for i, s in enumerate(steps[:5], 1):  # Show first 5
+                                                s_action = s.get("action_type") if isinstance(s, dict) else s.action_type
+                                                s_args = s.get("args") if isinstance(s, dict) else s.args
+                                                print(f"   Step {i}: {s_action} | args={s_args}")
+                                            
+                                            await send_json({
+                                                "type": "status", 
+                                                "status": "planning",
+                                                "message": f"loading knowledge from: {workflow_name}",
+                                                "task_id": task_id
+                                            })
                                 else:
                                     print(f"[WARNING] No workflow match found for: {goal}")
                         except Exception as e:
@@ -738,11 +1145,76 @@ async def websocket_agent(websocket: WebSocket):
                                     await send_json({
                                         "type": "status",
                                         "status": "running",
-                                        "message": f"Subtask {i}/{len(subtasks_to_execute)}: {subtask.action} {subtask.target}"
+                                        "message": f"Subtask {i}/{len(subtasks_to_execute)}: {subtask.action} {subtask.target}",
+                                        "task_id": task_id
                                     })
                                     
-                                    # Run agent for this subtask
+                                    # Build subtask goal
                                     subtask_goal = f"{subtask.action} {subtask.target}"
+                                    
+                                    # ==============================================
+                                    # CHECK IF THIS SUBTASK IS A HAMMER DOWNLOAD
+                                    # ==============================================
+                                    if is_hammer_download_intent(subtask_goal):
+                                        print(f"\n[HAMMER] SUBTASK IS HAMMER DOWNLOAD - USING DIRECT API!")
+                                        company = extract_company_from_goal(subtask_goal)
+                                        
+                                        if company:
+                                            try:
+                                                # Extract cookies from browser session
+                                                auth_cookie = None
+                                                if persistent_browser and persistent_browser.is_started:
+                                                    auth_cookie = await persistent_browser.get_auth_cookies_header()
+                                                    if auth_cookie:
+                                                        print(f"[AUTH] Using browser session cookies for API auth")
+                                                
+                                                # Fetch company registry from static_data namespace
+                                                companies_list = []
+                                                try:
+                                                    static_records = pinecone_service.find_all_static_data(limit=10)
+                                                    for record in static_records:
+                                                        data = record.get("data", "")
+                                                        if data:
+                                                            try:
+                                                                parsed = json.loads(data) if isinstance(data, str) else data
+                                                                if isinstance(parsed, list):
+                                                                    companies_list.extend(parsed)
+                                                            except json.JSONDecodeError:
+                                                                pass
+                                                    
+                                                    if companies_list:
+                                                        print(f"[HAMMER] Loaded {len(companies_list)} companies from static_data")
+                                                    else:
+                                                        print("[HAMMER] WARNING: No companies found in static_data namespace")
+                                                except Exception as e:
+                                                    print(f"[ERROR] Failed to load company registry from static_data: {e}")
+
+                                                # Create downloader with browser cookies AND companies
+                                                downloader = get_hammer_downloader(auth_cookie=auth_cookie, companies=companies_list)
+                                                result = await downloader.download_and_index(company)
+                                                
+                                                if result.get("success"):
+                                                    await send_json({
+                                                        "type": "status",
+                                                        "status": "completed", 
+                                                        "message": f"Hammer indexed: {result.get('records_count', 0)} records from {result.get('company_name')}",
+                                                        "task_id": task_id
+                                                    })
+                                                    
+                                                    # Update session context
+                                                    session_context.important_notes["hammer_company"] = result.get("company_name")
+                                                    session_context.important_notes["hammer_records"] = str(result.get("records_count", 0))
+                                                    
+                                                    total_steps += 1
+                                                    continue  # Skip to next subtask
+                                                else:
+                                                    print(f"[ERROR] Hammer download failed: {result.get('error')}")
+                                                    # Don't continue - let agent try as fallback
+                                            except Exception as e:
+                                                print(f"[ERROR] Hammer download exception: {e}")
+                                                # Don't continue - let agent try as fallback
+                                    
+                                    # Run agent for this subtask (normal browser automation)
                                     workflow = await agent.run(
                                         subtask_goal, 
                                         effective_start_url if i == 1 else "",  # Only use start_url for first subtask
@@ -761,29 +1233,36 @@ async def websocket_agent(websocket: WebSocket):
                                     "workflow_id": all_workflows[-1].id if all_workflows else task_id,
                                     "step_count": total_steps,
                                     "subtasks_completed": len(subtasks_to_execute),
+                                    "task_id": task_id
                                 })
                             else:
                                 # ==============================================
                                 # SINGLE TASK EXECUTION (original behavior)
                                 # ==============================================
                                 workflow = await agent.run(goal, effective_start_url, previous_workflow=recommended_workflow)
+                                session_metrics.record_task_completed()
                                 await send_json({
                                     "type": "completed",
                                     "workflow_id": workflow.id,
                                     "step_count": len(workflow.steps),
+                                    "task_id": task_id
                                 })
                         except asyncio.CancelledError:
+                            session_metrics.record_task_failed()
                             await send_json({
                                 "type": "status",
                                 "status": "stopped",
                                 "message": "Task cancelled",
+                                "task_id": task_id
                             })
                         except Exception as e:
+                            session_metrics.record_task_failed()
                             import traceback
                             traceback.print_exc()
                             await send_json({
                                 "type": "error",
                                 "message": str(e),
+                                "task_id": task_id
                             })
 
                     agent_task = asyncio.create_task(run_agent_task())

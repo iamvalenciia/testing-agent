@@ -1,38 +1,26 @@
 <template>
-  <div class="steps-container" ref="container">
+  <div class="steps-container" :class="{ 'dark-mode': isDark }" ref="container">
     <transition-group name="list" tag="div" class="steps-list">
       <div 
         v-for="(step, index) in reversedSteps" 
-        :key="step.step_number || index"
+        :key="step.step_number || (steps.length - index)"
         class="step-card"
         :class="{'latest': index === 0}"
       >
-        <div class="step-indicator">
-          <span class="step-num">#{{ step.step_number || index + 1 }}</span>
-          <div class="pulse-ring" v-if="index === 0"></div>
-        </div>
-        
         <div class="step-content">
           <div class="step-header">
-            <span class="action-badge">{{ step.action_type || step.name || 'ACTION' }}</span>
-            <span class="time">{{ formatTime(step.timestamp) }}</span>
+             <span class="step-num">#{{ step.step_number || (steps.length - index) }}</span>
+             <span class="action-badge">{{ step.action_type || 'ACTION' }}</span>
           </div>
-          
-          <div class="step-details">
-            <div v-if="step.args && Object.keys(step.args).length > 0" class="code-block">
-              <span v-for="(val, key) in step.args" :key="key" class="arg-item">
-                <span class="key">{{ key }}:</span> <span class="val">{{ truncate(val) }}</span>
-              </span>
-            </div>
-            <p v-if="step.reasoning" class="reasoning">
-              "{{ step.reasoning }}"
-            </p>
             
-            <!-- Screenshot thumbnail -->
-            <div v-if="step.screenshot" class="screenshot-thumb" @click="$emit('view-image', step.screenshot)">
-              <img :src="step.screenshot" alt="Step Screenshot" />
-              <div class="overlay">VIEW</div>
-            </div>
+          <!-- Screenshot thumbnail is the main content now -->
+          <div v-if="step.screenshot" class="screenshot-thumb" @click="$emit('view-image', step.screenshot)">
+            <img :src="step.screenshot" alt="Step Screenshot" />
+            <div class="overlay">VIEW</div>
+          </div>
+          <!-- Fallback if no screenshot -->
+          <div v-else class="screenshot-thumb" style="display:flex;align-items:center;justify-content:center;background:#222;">
+             <span style="font-size:0.6rem;color:#666;">NO IMAGE</span>
           </div>
         </div>
       </div>
@@ -45,7 +33,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, ref, watch, nextTick } from 'vue';
 
 const props = defineProps({
   steps: {
@@ -60,8 +48,17 @@ const props = defineProps({
 
 defineEmits(['view-image']);
 
-const reversedSteps = computed(() => {
-  return [...props.steps].reverse();
+const container = ref(null);
+
+// Reverse steps so newest appears first (on the left)
+const reversedSteps = computed(() => [...props.steps].reverse());
+
+// Auto-scroll to the left (start) when new steps are added - so user sees newest first
+watch(() => props.steps.length, async () => {
+  await nextTick();
+  if (container.value) {
+    container.value.scrollLeft = 0; // Scroll to leftmost position (newest)
+  }
 });
 
 function formatTime(ts) {
@@ -76,180 +73,129 @@ function truncate(val, len = 50) {
 </script>
 
 <style scoped>
+/* Horizontal Carousel Styles */
 .steps-container {
-  overflow-y: auto;
+  display: flex;
+  flex-direction: row;
+  overflow-x: auto;
+  overflow-y: hidden;
   height: 100%;
-  padding-right: 5px;
+  padding: 0.5rem;
+  gap: 0.75rem;
+  background: var(--bg-primary);
+  border-top: 1px solid var(--border-color);
+  align-items: center;
 }
 
 .steps-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
+  display: contents; /* Let children partake in flex container */
 }
 
 .step-card {
+  flex: 0 0 160px;
+  height: 140px;
   background: var(--bg-tertiary);
-  border-left: 2px solid var(--border-color);
-  padding: 0.75rem 1rem;
-  border-radius: 0 8px 8px 0;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
   position: relative;
-  transition: all 0.3s ease;
+  transition: all 0.2s ease;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.step-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--text-primary);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
 }
 
 .step-card.latest {
-  background: var(--bg-secondary);
-  border-left: 2px solid var(--text-primary);
+  border-color: var(--success);
 }
 
-.step-indicator {
+/* Compact Content for Carousel */
+.step-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.step-header {
   position: absolute;
-  left: -10px;
-  top: 0.75rem;
+  top: 0.5rem;
+  left: 0.5rem;
+  right: 0.5rem;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  margin: 0;
 }
 
 .step-num {
   font-size: 0.6rem;
-  color: var(--text-muted);
+  background: rgba(0,0,0,0.7);
+  color: white;
+  padding: 2px 6px;
+  border-radius: 4px;
+  backdrop-filter: blur(4px);
   font-family: 'JetBrains Mono', monospace;
-}
-
-.pulse-ring {
-  position: absolute;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-primary);
-  animation: pulse 1.5s infinite;
-}
-
-@keyframes pulse {
-  0% { transform: scale(1); opacity: 1; }
-  100% { transform: scale(2); opacity: 0; }
-}
-
-.step-header {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 0.5rem;
-  align-items: center;
 }
 
 .action-badge {
-  background: var(--bg-primary);
-  color: var(--text-secondary);
-  padding: 2px 8px;
+  font-size: 0.55rem;
+  padding: 2px 6px;
+  background: rgba(0,0,0,0.7);
+  color: white;
   border-radius: 4px;
-  font-size: 0.65rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  border: 1px solid var(--border-color);
-}
-
-.time {
-  font-size: 0.6rem;
-  color: var(--text-muted);
-  font-family: 'JetBrains Mono', monospace;
-}
-
-.code-block {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 0.7rem;
-  background: var(--bg-primary);
-  padding: 0.5rem;
-  border-radius: 4px;
-  margin-top: 0.5rem;
-  border: 1px solid var(--border-color);
-}
-
-.arg-item {
-  display: block;
-  margin-bottom: 2px;
-}
-
-.key { color: var(--text-secondary); }
-.val { color: var(--text-primary); }
-
-.reasoning {
-  font-style: italic;
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  margin-top: 0.5rem;
-  border-left: 2px solid var(--border-color);
-  padding-left: 0.5rem;
-  margin-bottom: 0;
-}
-
-.screenshot-thumb {
-  margin-top: 0.5rem;
-  position: relative;
-  display: inline-block;
-  cursor: pointer;
-  border-radius: 4px;
+  backdrop-filter: blur(4px);
+  border: none;
+  max-width: 100px;
+  white-space: nowrap;
   overflow: hidden;
-  border: 1px solid var(--border-color);
+  text-overflow: ellipsis;
+}
+
+/* Image takes full space */
+.screenshot-thumb {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border: none;
+  border-radius: 0;
 }
 
 .screenshot-thumb img {
-  height: 50px;
-  width: auto;
-  display: block;
-  transition: transform 0.3s;
-  filter: grayscale(0.3);
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: none;
+  transition: filter 0.3s ease;
 }
 
-.screenshot-thumb:hover img {
-  transform: scale(1.05);
-  filter: grayscale(0);
+/* Dark Mode: Reduce brightness for night viewing (only affects display, not downloads) */
+.steps-container.dark-mode .screenshot-thumb img {
+  filter: brightness(0.6) saturate(0.6);
 }
 
-.screenshot-thumb .overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+.steps-container.dark-mode .screenshot-thumb:hover img {
+  filter: brightness(0.9) saturate(1); /* Slightly brighter on hover */
+}
+
+.step-details p {
+  display: none; /* Hide details in carousel */
+}
+
+.time, .code-block, .reasoning {
+  display: none;
+}
+
+/* Empty State */
+.empty-state {
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.55rem;
-  font-weight: bold;
-  color: white;
-  opacity: 0;
-  transition: opacity 0.3s;
-  letter-spacing: 1px;
-}
-
-.screenshot-thumb:hover .overlay {
-  opacity: 1;
-}
-
-.empty-state {
-  text-align: center;
-  color: var(--text-muted);
-  margin-top: 2rem;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.75rem;
-}
-
-.blink {
-  animation: blink 1s infinite;
-}
-
-@keyframes blink {
-  50% { opacity: 0; }
-}
-
-/* Vue Transition Animations */
-.list-enter-active,
-.list-leave-active {
-  transition: all 0.4s ease;
-}
-.list-enter-from {
-  opacity: 0;
-  transform: translateX(15px);
-}
-.list-leave-to {
-  opacity: 0;
-  transform: translateX(-15px);
 }
 </style>

@@ -132,12 +132,29 @@ watch(inputText, () => {
 
 .message.user {
   background: var(--bg-secondary);
-  border-left: 3px solid var(--text-primary);
+  border-left: none;
+  border-right: 3px solid var(--text-primary);
+  align-self: flex-end;
+  max-width: 85%;
+}
+
+.message.user .message-header {
+  flex-direction: row-reverse;
+}
+
+.message.user .message-content {
+  text-align: left;
+}
+
+.message.user .message-content :deep(p) {
+  text-align: left;
 }
 
 .message.agent {
   background: var(--bg-tertiary);
   border-left: 3px solid var(--text-muted);
+  align-self: flex-start;
+  max-width: 85%;
 }
 
 .message.system {

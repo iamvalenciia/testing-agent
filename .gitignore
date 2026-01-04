@@ -22,6 +22,7 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+agent-backend/cache/embeddings
 
 # Virtual Environments
 .venv/

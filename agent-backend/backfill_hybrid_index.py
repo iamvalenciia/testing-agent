@@ -1,6 +1,6 @@
-"""Backfill Script - Migrate existing workflows to Hybrid Search sparse index.
+"""Backfill Script - Migrate existing workflows to use Hybrid Search.
 
-Run this ONCE to populate the sparse index with existing workflow data.
+Run this ONCE to ensure existing workflow data has both dense and sparse vectors.
 After running, hybrid search will work for both old and new workflows.
 
 Usage:
@@ -19,7 +19,7 @@ from config import HYBRID_SEARCH_ENABLED
 
 
 def backfill_hybrid_index():
-    """Migrate all existing workflows to the sparse index."""
+    """Migrate all existing workflows to use hybrid search (dense + sparse in same index)."""
     
     if not HYBRID_SEARCH_ENABLED:
         print("[ERROR] HYBRID_SEARCH_ENABLED is False. Enable it in config or .env first.")
@@ -28,19 +28,10 @@ def backfill_hybrid_index():
     print("=" * 60)
     print("HYBRID SEARCH BACKFILL - Migrating existing workflows")
     print("=" * 60)
+    print("\nNote: Using native hybrid search (dense + sparse in SAME index)")
     
     # Get hybrid search service
     hybrid_service = get_hybrid_search_service()
-    
-    # STEP 1: Ensure sparse index exists
-    print("\n[SETUP] Ensuring sparse index exists...")
-    try:
-        sparse_index_name = hybrid_service.ensure_sparse_index_exists("steps-index")
-        print(f"[OK] Sparse index ready: {sparse_index_name}")
-    except Exception as e:
-        print(f"[ERROR] Could not create sparse index: {e}")
-        print("   Please check your Pinecone quota and try again.")
-        return
     
     # List all existing workflows
     workflows = list_workflows()
@@ -104,17 +95,16 @@ def backfill_hybrid_index():
     # Upsert all records in one batch
     if records_to_upsert:
         print(f"\n{'=' * 60}")
-        print(f"Upserting {len(records_to_upsert)} records to hybrid index...")
+        print(f"Upserting {len(records_to_upsert)} records to steps-index...")
         print(f"{'=' * 60}\n")
         
-        dense_count, sparse_count = hybrid_service.hybrid_upsert(
-            dense_index_name="steps-index",
+        count = hybrid_service.hybrid_upsert(
+            index_name="steps-index",
             records=records_to_upsert
         )
         
         print(f"\n[COMPLETE] Backfill finished!")
-        print(f"   Dense index: {dense_count} vectors added")
-        print(f"   Sparse index: {sparse_count} vectors added")
+        print(f"   Vectors upserted: {count}")
         print(f"\n   Hybrid search is now enabled for all {len(records_to_upsert)} workflows.")
     else:
         print("\n[WARNING] No records to upsert. Check workflow data.")

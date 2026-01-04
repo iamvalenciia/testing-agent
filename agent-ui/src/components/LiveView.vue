@@ -1,5 +1,5 @@
 <template>
-  <div class="live-view-container">
+  <div class="live-view-container" :class="{ 'dark-mode': isDark }">
     <!-- Scanning Line Effect -->
     <div class="scanner-line"></div>
     
@@ -115,6 +115,13 @@ const statusLabel = computed(() => {
   max-height: 100%;
   object-fit: contain;
   border-radius: 4px;
+  filter: none;
+  transition: filter 0.3s ease;
+}
+
+/* Dark Mode: Reduce brightness */
+.live-view-container.dark-mode .screenshot-image {
+  filter: brightness(0.6) saturate(0.6);
 }
 
 .empty-viewport {

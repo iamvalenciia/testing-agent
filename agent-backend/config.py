@@ -6,6 +6,8 @@ load_dotenv()
 
 # Google AI
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "gemini-embedding-001")
+MRL_DIMENSION = int(os.getenv("MRL_DIMENSION", "768"))  # Matryoshka Representation Learning dimension
 
 # Pinecone
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "")

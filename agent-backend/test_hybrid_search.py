@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch, MagicMock
 from typing import List, Dict, Any
 
 from hybrid_search import HybridSearchService, HybridSearchResult, get_hybrid_search_service
+from config import MRL_DIMENSION
 
 
 class TestHybridSearchResult:
@@ -58,7 +59,7 @@ class TestRRFFusion:
     def test_rrf_fusion_basic(self, mock_pinecone, mock_get_embedder):
         """Test basic RRF fusion calculation."""
         mock_embedder = Mock()
-        mock_embedder.embed_query.return_value = [0.1] * 768
+        mock_embedder.embed_query.return_value = [0.1] * MRL_DIMENSION
         mock_get_embedder.return_value = mock_embedder
         
         service = HybridSearchService(api_key="test-key")
@@ -98,7 +99,7 @@ class TestRRFFusion:
     def test_rrf_fusion_alpha_extremes(self, mock_pinecone, mock_get_embedder):
         """Test RRF fusion with alpha at extremes (0 and 1)."""
         mock_embedder = Mock()
-        mock_embedder.embed_query.return_value = [0.1] * 768
+        mock_embedder.embed_query.return_value = [0.1] * MRL_DIMENSION
         mock_get_embedder.return_value = mock_embedder
         
         service = HybridSearchService(api_key="test-key")
@@ -143,7 +144,7 @@ class TestHybridSearchService:
     def test_generate_dense_embedding(self, mock_pinecone, mock_get_embedder):
         """Test dense embedding generation using Gemini."""
         mock_embedder = Mock()
-        expected_embedding = [0.1, 0.2, 0.3] + [0.0] * 765
+        expected_embedding = [0.1, 0.2, 0.3] + [0.0] * (MRL_DIMENSION - 3)
         mock_embedder.embed_query.return_value = expected_embedding
         mock_get_embedder.return_value = mock_embedder
         

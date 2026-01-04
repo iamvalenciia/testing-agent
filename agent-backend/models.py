@@ -94,4 +94,22 @@ class SaveWorkflowRequest(BaseModel):
     description: str
     tags: List[str] = []
     steps: Optional[List[ActionStep]] = None  # Optional: send accumulated steps directly
+    # NEW FIELDS for enhanced Pinecone indexing
+    namespace: str = "test_execution_steps"  # or "test_success_cases"
+    index: str = "steps-index"  # or "hammer-index"
+    text: str = ""  # User goals/prompts concatenados
+    urls_visited: List[str] = []
+    actions_performed: Dict[str, int] = {}
+    steps_reference_only: List[Dict[str, Any]] = []  # Reference only - NO x,y coordinates
+    user_prompts: List[str] = []  # All user prompts sent during the session
+
+
+class SaveStaticDataRequest(BaseModel):
+    """Request to save static data to the static_data namespace.
+    
+    Security: Input is sanitized server-side to prevent injection attacks.
+    This namespace stores valuable information that rarely changes (e.g., credentials,
+    API keys, configuration values).
+    """
+    data: str  # Raw user input - will be sanitized before storage
 
