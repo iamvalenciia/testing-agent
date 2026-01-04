@@ -52,6 +52,7 @@ class HammerDownloader:
     def __init__(
         self, 
         auth_cookie: Optional[str] = None,
+        jwt_token: Optional[str] = None,
         companies: List[Dict] = None,
         on_progress: Optional[Callable[[str, float], None]] = None
     ):
@@ -59,13 +60,12 @@ class HammerDownloader:
         Initialize the downloader.
         
         Args:
-            auth_cookie: Authentication cookie for Graphite API.
-                        If not provided, will try to get from browser session.
+            auth_cookie: Cookie string for Graphite API (fallback).
+            jwt_token: JWT token for Authorization Bearer header (preferred).
             on_progress: Optional callback for progress updates (message, percentage)
         """
         self.auth_cookie = auth_cookie or os.getenv("GRAPHITE_AUTH_COOKIE", "")
-        self.on_progress = on_progress or (lambda msg, pct: None)
-        self.auth_cookie = auth_cookie or os.getenv("GRAPHITE_AUTH_COOKIE", "")
+        self.jwt_token = jwt_token
         self.on_progress = on_progress or (lambda msg, pct: None)
         self.companies = companies or []
         
@@ -74,7 +74,8 @@ class HammerDownloader:
         else:
             print(f"[DOWNLOADER] Initialized with {len(self.companies)} companies")
         
-        print("[DOWNLOADER] HammerDownloader initialized")
+        auth_method = "JWT" if self.jwt_token else ("Cookie" if self.auth_cookie else "None")
+        print(f"[DOWNLOADER] HammerDownloader initialized (Auth: {auth_method})")
     
     def find_company(self, query: str) -> Optional[Dict]:
         """
@@ -148,8 +149,12 @@ class HammerDownloader:
         url = f"{self.BASE_URL}{self.HISTORY_ENDPOINT}"
         params = {"filter": company_id}
         
+        # Build headers - prefer JWT Authorization, fallback to Cookie
         headers = {}
-        if self.auth_cookie:
+        if self.jwt_token:
+            headers["Authorization"] = f"Bearer {self.jwt_token}"
+            print(f"[API] Using Authorization: Bearer {self.jwt_token[:20]}...")
+        elif self.auth_cookie:
             headers["Cookie"] = self.auth_cookie
         
         self.on_progress(f"Fetching hammer history for {company_id}...", 0.1)
@@ -202,8 +207,11 @@ class HammerDownloader:
         """
         url = f"{self.BASE_URL}{self.DOWNLOAD_ENDPOINT}/{history_id}"
         
+        # Build headers - prefer JWT Authorization, fallback to Cookie
         headers = {}
-        if self.auth_cookie:
+        if self.jwt_token:
+            headers["Authorization"] = f"Bearer {self.jwt_token}"
+        elif self.auth_cookie:
             headers["Cookie"] = self.auth_cookie
         
         self.on_progress(f"Downloading {filename}...", 0.3)
@@ -235,41 +243,58 @@ class HammerDownloader:
         Complete pipeline: find company → get history → download → index.
         
         Args:
-            company_query: Company name or alias (e.g., "western digital")
+            company_query: Company name, alias, OR direct company ID (e.g., "US5078")
             clear_existing: If True, clear hammer-index before indexing
             
         Returns:
             Dict with success status, records_count, error if any
         """
+        import re
+        
         print("\n" + "=" * 60)
         print("[HAMMER DOWNLOAD] STARTING DIRECT API DOWNLOAD PIPELINE")
         print("=" * 60)
         print(f"[QUERY] Company query: '{company_query}'")
         
-        # Step 1: Find company
-        self.on_progress("Searching for company...", 0.05)
-        company = self.find_company(company_query)
+        company_id = None
+        company_name = None
         
-        if not company:
-            return {
-                "success": False,
-                "error": f"Company not found: '{company_query}'",
-                "available_companies": [c["company_name"] for c in self.companies],
-            }
+        # ========================================
+        # STEP 1: Detect if input is a DIRECT ID
+        # ========================================
+        # Pattern: Starts with 2-3 letters followed by numbers (e.g., US5078, US66254)
+        direct_id_pattern = r"^[A-Za-z]{2,3}\d{3,}$"
         
-        # Handle both 'id' and 'company_id' field names (Pinecone data may use either)
-        company_id = company.get("id") or company.get("company_id")
-        company_name = company.get("company_name", "Unknown Company")
+        if re.match(direct_id_pattern, company_query.strip()):
+            # Direct ID mode - skip company lookup entirely
+            company_id = company_query.strip().upper()
+            company_name = f"Company {company_id}"  # Placeholder name
+            print(f"[OK] Direct ID mode: Using '{company_id}' directly (no lookup)")
+        else:
+            # Standard mode - fuzzy match from registry
+            self.on_progress("Searching for company...", 0.05)
+            company = self.find_company(company_query)
+            
+            if not company:
+                return {
+                    "success": False,
+                    "error": f"Company not found: '{company_query}'. Try entering the company ID directly (e.g., 'US5078').",
+                    "available_companies": [c.get("company_name", "Unknown") for c in self.companies],
+                }
+            
+            # Handle both 'id' and 'company_id' field names (Pinecone data may use either)
+            company_id = company.get("id") or company.get("company_id")
+            company_name = company.get("company_name", "Unknown Company")
+            
+            if not company_id:
+                print(f"[ERROR] Company record missing 'id' field: {company}")
+                return {
+                    "success": False,
+                    "error": f"Company '{company_name}' found but missing ID field in registry. Please update the company registry in Pinecone.",
+                    "company_data": company,
+                }
         
-        if not company_id:
-            print(f"[ERROR] Company record missing 'id' field: {company}")
-            return {
-                "success": False,
-                "error": f"Company '{company_name}' found but missing ID field in registry. Please update the company registry in Pinecone.",
-                "company_data": company,
-            }
-        
-        print(f"[OK] Found company: {company_name} (ID: {company_id})")
+        print(f"[OK] Using company: {company_name} (ID: {company_id})")
         
         # Step 2: Get latest hammer history
         self.on_progress(f"Fetching latest hammer for {company_name}...", 0.1)
@@ -353,22 +378,27 @@ _downloader: Optional[HammerDownloader] = None
 
 def get_hammer_downloader(
     auth_cookie: Optional[str] = None,
+    jwt_token: Optional[str] = None,
     companies: List[Dict] = None,
     on_progress: Optional[Callable[[str, float], None]] = None
 ) -> HammerDownloader:
     """
     Get or create the HammerDownloader instance.
     
-    Note: If auth_cookie is provided, it always creates a new instance
+    Note: If auth credentials are provided, it always creates a new instance
     to ensure fresh credentials are used.
     """
     global _downloader
     
-    # Always create new instance when auth_cookie OR companies is provided
-    # This ensures we use fresh browser session cookies and latest registry
-    if auth_cookie or companies:
-        print(f"[DOWNLOADER] Creating new instance (fresh cookies/companies)")
-        _downloader = HammerDownloader(auth_cookie=auth_cookie, companies=companies, on_progress=on_progress)
+    # Always create new instance when auth credentials or companies provided
+    if auth_cookie or jwt_token or companies:
+        print(f"[DOWNLOADER] Creating new instance (fresh auth/companies)")
+        _downloader = HammerDownloader(
+            auth_cookie=auth_cookie, 
+            jwt_token=jwt_token,
+            companies=companies, 
+            on_progress=on_progress
+        )
         return _downloader
     
     # Reuse singleton only when nothing provided and it already exists

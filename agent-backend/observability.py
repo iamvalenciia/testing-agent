@@ -56,6 +56,12 @@ class SessionMetrics:
         self.total_gemini_api_duration = 0.0
         self.total_browser_action_duration = 0.0
         
+        # Token Usage & Cost (Aggregated)
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
+        self.total_estimated_cost = 0.0
+        self.model_usage = {}  # {model_name: {input: X, output: Y, cost: Z}}
+        
         # Guardrail results (populated after task completion)
         self.guardrail_results = {
             "step_count_expected": None,
@@ -107,6 +113,19 @@ class SessionMetrics:
     def record_pinecone_query(self):
         """Record a Pinecone query."""
         self.pinecone_queries += 1
+
+    def record_tokens(self, model: str, input_tokens: int, output_tokens: int, cost: float):
+        """Record token usage and cost for a model call."""
+        self.total_input_tokens += input_tokens
+        self.total_output_tokens += output_tokens
+        self.total_estimated_cost += cost
+        
+        if model not in self.model_usage:
+            self.model_usage[model] = {"input": 0, "output": 0, "cost": 0.0}
+            
+        self.model_usage[model]["input"] += input_tokens
+        self.model_usage[model]["output"] += output_tokens
+        self.model_usage[model]["cost"] += cost
     
     def record_guardrail_result(self, summary: dict):
         """Record guardrail validation results.
@@ -148,6 +167,12 @@ class SessionMetrics:
             },
             "pinecone": {
                 "queries": self.pinecone_queries,
+            },
+            "tokens": {
+                "total_input": self.total_input_tokens,
+                "total_output": self.total_output_tokens,
+                "total_cost_usd": round(self.total_estimated_cost, 4),
+                "model_usage": self.model_usage,
             },
             "guardrails": self.guardrail_results,
         }

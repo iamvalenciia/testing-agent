@@ -364,13 +364,17 @@ class HammerETL:
             "columns": list(df.columns)
         }
         
+        # Identify semantic columns for this sheet
+        semantic_cols = self._identify_semantic_columns(df.columns)
+        
         # Convert to HammerRow objects
         rows: List[HammerRow] = []
         clean_sheet_name = sheet_name.replace(" ", "_").lower()
         
         for idx, row in df.iterrows():
-            # Create text representation
+            # Create standard text parts
             text_parts = [f"Sheet: {sheet_name}"]
+            
             metadata = {
                 "source": "hammer_excel",
                 "sheet_name": sheet_name,
@@ -378,6 +382,20 @@ class HammerETL:
                 "excel_row": header_row + idx + 2,  # Account for 1-indexing and header
                 "indexed_at": datetime.now().isoformat(),
             }
+            
+            # --- SEMANTIC ENRICHMENT ---
+            # Try to build a "Logic Summary" if semantic columns are found
+            logic_summary = self._build_logic_summary(row, semantic_cols)
+            if logic_summary:
+                text_parts.insert(0, f"LOGIC: {logic_summary}")
+                metadata["logic_summary"] = logic_summary
+            
+            # Add semantic fields to metadata explicitly
+            for role, col_name in semantic_cols.items():
+                val = row.get(col_name)
+                if val:
+                    metadata[f"hammer_{role}"] = str(val)
+            # ---------------------------
             
             # Add non-empty values to text and metadata
             for col, val in row.items():
@@ -407,6 +425,82 @@ class HammerETL:
         
         return rows, stats
     
+    def _identify_semantic_columns(self, columns: List[str]) -> Dict[str, str]:
+        """
+        Identify columns that map to semantic concepts (Question, Answer Key, etc).
+        Returns map of {role: column_name}.
+        """
+        mapping = {}
+        cols_lower = {c.lower(): c for c in columns}
+        
+        # heuristics for common column names in Hammer files
+        # 1. Workflow / Group
+        for term in ["group", "workflow", "section", "category", "module"]:
+            matches = [c for c in cols_lower if term in c]
+            if matches:
+                mapping["group"] = cols_lower[matches[0]]
+                break
+                
+        # 2. Question ID / Code
+        for term in ["question_id", "question_code", "q_id", "code", "id"]:
+            matches = [c for c in cols_lower if term == c or f"{term}_" in c]
+            if matches:
+                mapping["id"] = cols_lower[matches[0]]
+                break
+        
+        # 3. Question Text
+        for term in ["question_text", "question", "prompt", "label", "text"]:
+            matches = [c for c in cols_lower if term in c and "id" not in c and "key" not in c]
+            if matches:
+                mapping["question"] = cols_lower[matches[0]]
+                break
+                
+        # 4. Answer Key / Value
+        for term in ["answer_key", "answer_code", "key", "option_code"]:
+            matches = [c for c in cols_lower if term in c]
+            if matches:
+                mapping["answer_key"] = cols_lower[matches[0]]
+                break
+                
+        # 5. Dependency / Prerequisite
+        for term in ["depends_on", "prerequisite", "parent", "condition"]:
+            matches = [c for c in cols_lower if term in c]
+            if matches:
+                mapping["dependency"] = cols_lower[matches[0]]
+                break
+                
+        return mapping
+
+    def _build_logic_summary(self, row: pd.Series, semantic_cols: Dict[str, str]) -> str:
+        """
+        Build a natural language summary of the row's logic using identified columns.
+        """
+        parts = []
+        
+        # "[Group] - [Question ID]"
+        group = row.get(semantic_cols.get("group", ""), "")
+        q_id = row.get(semantic_cols.get("id", ""), "")
+        
+        if group:
+            parts.append(f"[{group}]")
+        if q_id:
+            parts.append(f"Node {q_id}")
+            
+        # "Question: ..."
+        question = row.get(semantic_cols.get("question", ""), "")
+        if question:
+            parts.append(f"Question: '{question}'")
+            
+        # "Requires Answer Key: ..."
+        ans_key = row.get(semantic_cols.get("answer_key", ""), "")
+        if ans_key and str(ans_key).strip():
+            parts.append(f"Associated Key: {ans_key}")
+            
+        if not parts:
+            return ""
+            
+        return " | ".join(parts)
+
     def _detect_header_row(self, xls: pd.ExcelFile, sheet_name: str) -> int:
         """
         Auto-detect the header row in a sheet.

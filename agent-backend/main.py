@@ -48,6 +48,8 @@ from hammer_downloader import (
     extract_company_from_goal,
     parse_companies_from_text
 )
+from auth_service import get_auth_service
+from dependency_analyzer import get_dependency_analyzer
 import os
 
 # Initialize services
@@ -62,6 +64,21 @@ active_tasks: Dict[str, Dict] = {}
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     logger.info("app_starting", version="1.0.0")
+    
+    # Pre-warm authentication state (AWAIT to ensure it completes before requests)
+    try:
+        auth_service = get_auth_service()
+        print("[STARTUP] Pre-warming authentication...")
+        await auth_service.login_and_capture_state()
+        cookies = auth_service.get_cookies_dict()
+        if cookies:
+            print(f"[STARTUP] Auth ready: {len(cookies)} cookies captured")
+        else:
+            print("[STARTUP] Warning: Auth completed but no cookies captured")
+    except Exception as e:
+        logger.error("auth_preload_error", error=str(e))
+        print(f"[STARTUP] Auth pre-warm failed: {e}")
+        
     yield
     logger.info("app_shutting_down")
 
@@ -445,7 +462,12 @@ async def search_companies(q: str):
     Args:
         q: Search query (e.g., "western", "adobe")
     """
-    downloader = get_hammer_downloader()
+    # Inject auth token if available
+    auth_service = get_auth_service()
+    cookies = auth_service.get_cookies_dict()
+    cookie_str = "; ".join([f"{k}={v}" for k,v in cookies.items()])
+    
+    downloader = get_hammer_downloader(auth_cookie=cookie_str)
     match = downloader.find_company(q)
     
     if match:
@@ -486,8 +508,37 @@ async def download_hammer_direct(request: HammerDownloadRequest):
         auth_cookie: Optional authentication cookie
     """
     try:
-        # Create downloader with optional auth
-        downloader = get_hammer_downloader(auth_cookie=request.auth_cookie)
+        # Get auth credentials - prioritize JWT token over cookies
+        auth_cookie = request.auth_cookie
+        jwt_token = None
+        
+        if not auth_cookie:
+            auth_service = get_auth_service()
+            
+            # First try to get JWT token (preferred)
+            jwt_token = auth_service.get_jwt_token()
+            
+            # If no JWT, try to get cookies as fallback
+            if not jwt_token:
+                cookies = auth_service.get_cookies_dict()
+                
+                # If neither available, trigger login
+                if not cookies:
+                    print("[HAMMER] No cached auth, triggering login...")
+                    await auth_service.login_and_capture_state()
+                    jwt_token = auth_service.get_jwt_token()
+                    cookies = auth_service.get_cookies_dict()
+                
+                if not jwt_token and cookies:
+                    auth_cookie = "; ".join([f"{k}={v}" for k,v in cookies.items()])
+                    print(f"[HAMMER] Using {len(cookies)} auth cookies (fallback)")
+            
+            if jwt_token:
+                print(f"[HAMMER] Using JWT token ({len(jwt_token)} chars)")
+            elif not auth_cookie:
+                print("[HAMMER] Warning: No auth credentials available, API calls may fail")
+        
+        downloader = get_hammer_downloader(auth_cookie=auth_cookie, jwt_token=jwt_token)
         
         # Run the download and index pipeline
         result = await downloader.download_and_index(
@@ -659,7 +710,8 @@ THIS IS AUTOMATIC - NO BROWSER ACTIONS NEEDED!
 
 
 @app.websocket("/ws/agent")
-async def websocket_agent(websocket: WebSocket):
+@app.websocket("/ws/training")
+async def websocket_endpoint(websocket: WebSocket):
     """
     WebSocket endpoint for real-time agent control.
     
@@ -736,10 +788,24 @@ async def websocket_agent(websocket: WebSocket):
                     goal = message.get("goal", "")
                     start_url = message.get("start_url", "")
                     step_offset = message.get("step_offset", 0)
+                    mode = message.get("mode", "training") # "training" or "production"
                     
                     if not goal:
                         await send_json({"type": "error", "message": "Goal is required"})
                         continue
+                        
+                    # Inject Auth State
+                    auth_service = get_auth_service()
+                    storage_state = auth_service.get_storage_state()
+                    if storage_state:
+                         print("[WS] Injecting auth state into browser session")
+                         # Note: BrowserController needs to support this in .start()
+                         
+                    # Determine route path to set default mode if not specified
+                    # (FastAPI doesn't easily expose path in WS, so rely on client 'mode' or default)
+                    
+                    # Store mode in context
+                    active_tasks[str(uuid.uuid4())] = {"mode": mode, "status": "pending"} # placeholder
                     
                     # ==============================================
                     # PROCESS SPECIAL COMMANDS IN GOAL
@@ -783,8 +849,59 @@ async def websocket_agent(websocket: WebSocket):
                             pass
 
                     task_id = str(uuid.uuid4())
-                    active_tasks[task_id] = {"steps": [], "status": TaskStatus.PENDING}
+                    active_tasks[task_id] = {"steps": [], "status": TaskStatus.PENDING, "mode": mode}
                     session_metrics.record_task_started()
+                    
+                    # --- PRODUCTION MODE: ADVISOR ---
+                    if mode == "production":
+                        await send_json({
+                            "type": "status",
+                            "status": "thinking",
+                            "message": "Analyzing Ticket & Hammer Dependencies...",
+                            "task_id": task_id
+                        })
+                        
+                        try:
+                            # Run Dependency Analysis
+                            analyzer = get_dependency_analyzer()
+                            analysis = await analyzer.analyze_ticket(goal)
+                            
+                            # Send Report
+                            report_text = f"### 🛡️ Production Advisor Report\n\n"
+                            
+                            if analysis["found"]:
+                                report_text += f"{analysis['guidance_text']}\n\n"
+                                report_text += "### 📋 Recommended Verification Steps\n"
+                                for q in analysis["questions_to_verify"]:
+                                    report_text += f"- [ ] Check {q}\n"
+                                    
+                                report_text += "\n> **Next Step:** Please manually verify these settings in the Hammer file or Environment before proceeding."
+                            else:
+                                report_text += "No direct Hammer dependencies found for this ticket. Proceed with standard exploratory testing."
+                                
+                            # Send as a 'step' with no screenshot, just text/plan
+                            # We treat it as an agent message
+                            await send_json({
+                                "type": "status",
+                                "status": "completed",
+                                "message": report_text, 
+                                "task_id": task_id
+                            })
+                            
+                            # Also save as a pseudo-task result so it's not empty
+                            active_tasks[task_id]["analysis"] = analysis
+                            
+                        except Exception as e:
+                            logger.error("analysis_failed", error=str(e))
+                            await send_json({
+                                "type": "error", 
+                                "message": f"Dependency Analysis Failed: {str(e)}",
+                                "task_id": task_id
+                            })
+                            
+                        continue  # End this loop iteration, don't start the standard agent
+                    
+                    # --- TRAINING MODE: STANDARD AGENT ---
 
                     # Callbacks that send messages directly via WebSocket
                     def on_step(step: ActionStep, screenshot_b64: str):
@@ -819,11 +936,17 @@ async def websocket_agent(websocket: WebSocket):
                     # Create persistent browser if not exists
                     if persistent_browser is None:
                         persistent_browser = BrowserController()
-                        # Only navigate to start_url on first browser start
+                        
+                        # Inject Auth State from Service
+                        auth_service = get_auth_service()
+                        storage_state = auth_service.get_storage_state()
+                        if storage_state:
+                            print("[WS] Starting browser with injected auth state")
+                        
+                        # Start browser explicitly to inject auth
+                        await persistent_browser.start(start_url, storage_state=storage_state)
                         # NOTE: Changed from google.com to about:blank - no more unnecessary searches!
-                        initial_url = start_url if start_url else "about:blank"
-                        await persistent_browser.start(initial_url)
-                        print(f"[BROWSER] Browser started at: {initial_url}")
+                        print(f"[BROWSER] Browser started at: {start_url or 'about:blank'}")
                     
                     # Create agent with PERSISTENT browser AND session context
                     # The session_context is passed in - it lives across all tasks!

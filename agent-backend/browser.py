@@ -52,8 +52,8 @@ class BrowserController:
         """Get the downloads directory."""
         return DOWNLOADS_DIR
 
-    async def start(self, start_url: str = "about:blank") -> None:
-        """Initialize and launch the browser with download support."""
+    async def start(self, start_url: str = "about:blank", storage_state: Optional[Dict] = None) -> None:
+        """Initialize and launch the browser with download support and optional auth state."""
         if self._started:
             # Browser already running, just navigate if needed
             if start_url and start_url != "about:blank" and self._page:
@@ -70,11 +70,17 @@ class BrowserController:
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(headless=HEADLESS)
         
-        # Create context WITH download support
-        self._context = await self._browser.new_context(
-            viewport={"width": SCREEN_WIDTH, "height": SCREEN_HEIGHT},
-            accept_downloads=True,  # CRITICAL: Enable downloads
-        )
+        # Create context WITH download support and optional auth state
+        context_args = {
+            "viewport": {"width": SCREEN_WIDTH, "height": SCREEN_HEIGHT},
+            "accept_downloads": True,
+        }
+        
+        if storage_state:
+            print("[BROWSER] Injecting auth state (cookies/origins)")
+            context_args["storage_state"] = storage_state
+            
+        self._context = await self._browser.new_context(**context_args)
         
         # Set up download handler
         self._context.on("download", self._on_download)

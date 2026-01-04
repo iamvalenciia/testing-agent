@@ -29,6 +29,7 @@ from observability import (
     BROWSER_ACTIONS,
     BROWSER_ACTION_DURATION,
 )
+from token_calculator import get_token_calculator
 
 
 class ComputerUseAgent:
@@ -564,6 +565,36 @@ class ComputerUseAgent:
                         # Track Gemini API call in session metrics
                         if self.session_metrics:
                             self.session_metrics.record_gemini_call(api_duration)
+                            
+                            # --- TOKEN & COST TRACKING ---
+                            try:
+                                input_tokens = 0
+                                output_tokens = 0
+                                
+                                # Try to get exact usage from metadata
+                                if response and hasattr(response, 'usage_metadata') and response.usage_metadata:
+                                    input_tokens = response.usage_metadata.prompt_token_count or 0
+                                    output_tokens = response.usage_metadata.candidates_token_count or 0
+                                else:
+                                    # Fallback to estimation
+                                    print("⚠️ No usage_metadata found, estimating tokens...")
+                                    calc = get_token_calculator()
+                                    # Estimate prompt (context + screenshot approx)
+                                    # Screenshot tokens are hard to estimate exactly without metadata (~1k-2k usually)
+                                    # This is a rough fallback
+                                    input_tokens = calc.estimate_tokens(str(contents)) + 1500 
+                                    output_tokens = calc.estimate_tokens(response.text if response and hasattr(response, 'text') else "")
+                                
+                                # Calculate cost
+                                calc = get_token_calculator()
+                                cost = calc.calculate_cost(self.MODEL_NAME, input_tokens, output_tokens)
+                                
+                                # Record to metrics
+                                self.session_metrics.record_tokens(self.MODEL_NAME, input_tokens, output_tokens, cost)
+                                print(f"   💰 Cost: ${cost:.4f} (In: {input_tokens}, Out: {output_tokens})")
+                                
+                            except Exception as token_err:
+                                print(f"⚠️ Error tracking tokens: {token_err}")
                         
                         # Check for valid response
                         if response and response.candidates:

@@ -47,12 +47,7 @@ class ModelSelector:
             "capabilities": ["text", "reasoning", "structured_output"],
             "max_output_tokens": 8192
         },
-        "flash_vision": {
-            "name": "gemini-2.5-flash-preview-05-20",
-            "cost": 3,
-            "capabilities": ["text", "vision", "reasoning"],
-            "max_output_tokens": 8192
-        },
+
         "computer_use": {
             "name": "gemini-2.5-computer-use-preview-10-2025",
             "cost": 10,
@@ -71,7 +66,7 @@ class ModelSelector:
     TASK_MODEL_MAP = {
         TaskType.SUMMARIZE: "lite",      # Simple text task
         TaskType.DECOMPOSE: "lite",      # Simple text task
-        TaskType.DESCRIBE_IMAGE: "flash_vision",
+        TaskType.DESCRIBE_IMAGE: "flash", # Upgraded to flash 2.0 (multimodal)
         TaskType.BROWSER_CONTROL: "computer_use",
         TaskType.GENERAL_CHAT: "flash",
         TaskType.EMBED: "embedding"
@@ -95,9 +90,7 @@ class ModelSelector:
         # Get default model tier for this task
         model_tier = cls.TASK_MODEL_MAP.get(task_type, "flash")
         
-        # Upgrade if vision is required
-        if needs_vision and model_tier in ["lite"]:
-            model_tier = "flash_vision"
+
         
         # Upgrade if structured output is required and using lite
         if needs_structured_output and model_tier == "lite":

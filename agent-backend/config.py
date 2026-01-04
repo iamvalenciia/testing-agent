@@ -25,3 +25,8 @@ MAX_AGENT_TURNS = 20
 HYBRID_SEARCH_ENABLED = os.getenv("HYBRID_SEARCH_ENABLED", "true").lower() == "true"
 HYBRID_ALPHA = float(os.getenv("HYBRID_ALPHA", "0.5"))  # 0=all keyword, 1=all semantic
 HYBRID_TOP_K_MULTIPLIER = int(os.getenv("HYBRID_TOP_K_MULTIPLIER", "3"))  # Over-fetch for fusion
+
+# Test Credentials
+TEST_EMAIL = os.getenv("TEST_EMAIL", "")
+TEST_PASSWORD = os.getenv("TEST_PASSWORD", "")
+TEST_WEBSITE = os.getenv("TEST_WEBSITE", "https://test.projectgraphite.com")

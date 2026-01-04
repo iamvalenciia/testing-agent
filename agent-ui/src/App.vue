@@ -9,6 +9,28 @@
         <h1>Configuration Specialist Agent</h1>
       </div>
       <div class="controls">
+          <!-- Mode Toggle -->
+        <button 
+          class="control-btn mode-toggle" 
+          @click="toggleMode"
+          :class="{ 'production-mode': isProductionMode }"
+          :title="isProductionMode ? 'Switch to Training Mode' : 'Switch to Production Mode'"
+        >
+          <span class="mode-icon">{{ isProductionMode ? '🛡️' : '🎓' }}</span>
+          <span class="mode-label">{{ isProductionMode ? 'PRODUCTION' : 'TRAINING' }}</span>
+        </button>
+
+         <!-- Hammer Upload Button -->
+        <button 
+          class="control-btn hammer-btn" 
+          @click="openHammerModal"
+          title="Upload/Index Hammer File"
+          :disabled="isRunning"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+          HAMMER
+        </button>
+
         <!-- Theme Toggle -->
         <button 
           class="control-btn icon-btn" 
@@ -314,6 +336,57 @@
           >
             <span v-if="isSavingStaticData" class="saving-spinner"></span>
             {{ isSavingStaticData ? 'SAVING...' : 'SAVE' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hammer Upload Modal -->
+    <div 
+      v-if="showHammerModal" 
+      class="modal-overlay" 
+      :class="{ 'saving-locked': isUploadingHammer }"
+      @click.self="handleHammerModalOverlayClick"
+    >
+      <div class="modal-content glass-panel hammer-modal" :class="{ 'is-saving': isUploadingHammer }">
+        <div v-if="isUploadingHammer" class="save-progress-container">
+          <div class="save-progress-bar">
+            <div class="save-progress-fill"></div>
+          </div>
+          <span class="save-progress-text">Downloading & Indexing Hammer (this may take 10-20s)...</span>
+        </div>
+        
+        <h3>HAMMER CONFIGURATION</h3>
+        <p class="static-data-description">Enter the Company ID or Name to automatically download and index the latest Hammer file from Graphite.</p>
+        
+        <div class="form-group">
+          <label>COMPANY ID / NAME</label>
+          <input 
+            v-model="hammerForm.companyValue" 
+            type="text" 
+            placeholder="e.g. western, US66254, adobe" 
+            :disabled="isUploadingHammer"
+            @keydown.enter="submitHammerUpload"
+          />
+        </div>
+        
+        <div class="modal-actions">
+           <button 
+            class="btn secondary" 
+            @click="closeHammerModal" 
+            :disabled="isUploadingHammer"
+            :class="{ 'btn-disabled': isUploadingHammer }"
+          >
+            {{ isUploadingHammer ? 'PLEASE WAIT...' : 'CANCEL' }}
+          </button>
+          <button 
+            class="btn primary" 
+            @click="submitHammerUpload" 
+            :disabled="isUploadingHammer || !hammerForm.companyValue.trim()"
+            :class="{ 'btn-saving': isUploadingHammer }"
+          >
+            <span v-if="isUploadingHammer" class="saving-spinner"></span>
+            {{ isUploadingHammer ? 'INDEXING...' : 'START INDEXING' }}
           </button>
         </div>
       </div>
@@ -641,6 +714,14 @@ const MAX_STATIC_DATA_CHARS = 10000
 const showReportModal = ref(false)
 const sessionDate = ref(new Date().toLocaleString())
 
+// Hammer Modal State
+const showHammerModal = ref(false)
+const isUploadingHammer = ref(false)
+const hammerForm = ref({ companyValue: '' })
+
+// Mode State
+const isProductionMode = ref(false) // Default to Training Mode
+
 // Session Metrics - Real-time from WebSocket
 const sessionMetrics = ref(null)
 
@@ -830,7 +911,8 @@ function handleSendMessage(goal) {
     type: 'start',
     goal: goal,
     start_url: '',
-    step_offset: stepOffset
+    step_offset: stepOffset,
+    mode: isProductionMode.value ? 'production' : 'training' 
   }))
   
   hasBrowser.value = true
@@ -1119,6 +1201,65 @@ function openReportModal() {
 function closeReportModal() {
   showReportModal.value = false
 }
+
+// Mode Toggle
+function toggleMode() {
+  if (isRunning.value) return
+  isProductionMode.value = !isProductionMode.value
+  showToast(`Switched to ${isProductionMode.value ? 'Production' : 'Training'} Mode`, 'info')
+}
+
+// Hammer Modal Functions
+function openHammerModal() {
+  hammerForm.value.companyValue = ''
+  showHammerModal.value = true
+}
+
+function handleHammerModalOverlayClick() {
+  if (isUploadingHammer.value) {
+    showToast('Indexing in progress, please wait...', 'info')
+    return
+  }
+  closeHammerModal()
+}
+
+function closeHammerModal() {
+  if (isUploadingHammer.value) return
+  showHammerModal.value = false
+}
+
+async function submitHammerUpload() {
+  const company = hammerForm.value.companyValue.trim()
+  if (!company) return
+  
+  isUploadingHammer.value = true
+  
+  try {
+    const response = await fetch('http://localhost:8000/hammer/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        company: company,
+        clear_existing: true
+      })
+    })
+    
+    if (response.ok) {
+      const result = await response.json()
+      showToast('Hammer file indexed successfully! ✓', 'success')
+      addMessage('system', `Hammer file for "${company}" extracted and indexed. Ready for testing.`)
+      closeHammerModal()
+    } else {
+      const err = await response.json()
+      showToast(err.detail || 'Download failed', 'error')
+    }
+  } catch (e) {
+    showToast('Error: ' + e.message, 'error')
+  } finally {
+    isUploadingHammer.value = false
+  }
+}
+
 
 function generateReportText() {
   let report = ''
@@ -2450,5 +2591,62 @@ body {
   font-size: 0.8rem;
   font-style: italic;
   padding: 1rem 0;
+}
+
+/* Mode Toggle */
+.mode-toggle {
+  display: flex !important;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(16, 185, 129, 0.1) !important;
+  border-color: rgba(16, 185, 129, 0.3) !important;
+  color: #10b981 !important;
+  min-width: 110px;
+  justify-content: center;
+}
+
+.mode-toggle:hover {
+  background: rgba(16, 185, 129, 0.2) !important;
+}
+
+.mode-toggle.production-mode {
+  background: rgba(245, 158, 11, 0.1) !important;
+  border-color: rgba(245, 158, 11, 0.3) !important;
+  color: #f59e0b !important;
+}
+
+.mode-toggle.production-mode:hover {
+  background: rgba(245, 158, 11, 0.2) !important;
+}
+
+.mode-icon {
+  font-size: 1rem;
+}
+
+.mode-label {
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  font-size: 0.7rem;
+}
+
+/* Hammer Button */
+.hammer-btn {
+  background: rgba(236, 72, 153, 0.1) !important;
+  border-color: rgba(236, 72, 153, 0.3) !important;
+  color: #ec4899 !important;
+}
+
+.hammer-btn:hover {
+  background: rgba(236, 72, 153, 0.2) !important;
+}
+
+/* Hammer Modal specific overrides */
+.hammer-modal {
+  max-width: 500px !important;
+}
+
+.hammer-modal h3 {
+  color: #ec4899 !important;
+  border-bottom-color: rgba(236, 72, 153, 0.3) !important;
 }
 </style>
