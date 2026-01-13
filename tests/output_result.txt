@@ -1,0 +1,22 @@
+﻿Loaded Excel with 342 rows
+Found 1 rows with 'Artificial Intelligence'
+
+============================================================
+DATA SENT TO MODEL:
+============================================================
+                        Question Id                         Topic Sub Topic                                                           UI Condition
+42  WESTERNDIGITAL.AI.Override.Info  Artificial Intelligence (AI)       NaN  <Compliance_AI_FINAL_SOT> = "Off" or <Compliance_AI_FINAL_Skip> = "y"
+============================================================
+
+============================================================
+RESPUESTA DEL MODELO GPT-5-MINI-2025-08-07:
+============================================================
+[
+  {
+    "question_id": "WESTERNDIGITAL.AI.Override.Info",
+    "ui_condition": "<Compliance_AI_FINAL_SOT> = \"Off\" or <Compliance_AI_FINAL_Skip> = \"y\""
+  }
+]
+============================================================
+
+Tokens: 111 input + 508 output

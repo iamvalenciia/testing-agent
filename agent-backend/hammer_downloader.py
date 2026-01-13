@@ -237,7 +237,8 @@ class HammerDownloader:
     async def download_and_index(
         self, 
         company_query: str,
-        clear_existing: bool = True
+        clear_existing: bool = True,
+        user_id: str = None
     ) -> Dict[str, Any]:
         """
         Complete pipeline: find company → get history → download → index.
@@ -245,6 +246,7 @@ class HammerDownloader:
         Args:
             company_query: Company name, alias, OR direct company ID (e.g., "US5078")
             clear_existing: If True, clear hammer-index before indexing
+            user_id: User identifier for namespace isolation (multi-user support)
             
         Returns:
             Dict with success status, records_count, error if any
@@ -255,6 +257,8 @@ class HammerDownloader:
         print("[HAMMER DOWNLOAD] STARTING DIRECT API DOWNLOAD PIPELINE")
         print("=" * 60)
         print(f"[QUERY] Company query: '{company_query}'")
+        if user_id:
+            print(f"[USER] Using namespace for user: {user_id}")
         
         company_id = None
         company_name = None
@@ -323,7 +327,7 @@ class HammerDownloader:
         
         print(f"[OK] Downloaded {len(file_bytes)} bytes")
         
-        # Step 4: Index using HammerIndexer
+        # Step 4: Index using HammerIndexer (with user namespace)
         self.on_progress("Indexing to Pinecone...", 0.5)
         print("\n[INDEXER] Starting Pinecone indexing...")
         
@@ -332,6 +336,9 @@ class HammerDownloader:
             result = indexer.index_hammer_from_bytes(
                 data=file_bytes,
                 filename=filename,
+                user_id=user_id,  # Pass user_id for namespace isolation
+                company_id=company_id,
+                company_name=company_name,
                 clear_existing=clear_existing
             )
             
@@ -339,6 +346,8 @@ class HammerDownloader:
                 print(f"\n[SUCCESS] Hammer indexed successfully!")
                 print(f"   Records: {result.get('records_count', 0)}")
                 print(f"   Sheets: {result.get('sheets', [])}")
+                if result.get("namespace"):
+                    print(f"   Namespace: {result.get('namespace')}")
                 
                 return {
                     "success": True,
@@ -351,6 +360,8 @@ class HammerDownloader:
                     "history_id": history_id,
                     "uploaded_by": history.get("user"),
                     "uploaded_at": history.get("createdAt"),
+                    "namespace": result.get("namespace"),
+                    "company_metadata": result.get("company_metadata"),
                 }
             else:
                 return {

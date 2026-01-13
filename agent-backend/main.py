@@ -8,10 +8,18 @@ from typing import Dict, Optional, List
 from contextlib import asynccontextmanager
 import time
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from prometheus_fastapi_instrumentator import Instrumentator
+
+# Google OAuth imports
+from google_auth import (
+    get_google_auth_service,
+    get_current_user,
+    get_current_user_optional,
+    get_websocket_token,
+)
 
 # Observability imports
 from observability import (
@@ -65,19 +73,11 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     logger.info("app_starting", version="1.0.0")
     
-    # Pre-warm authentication state (AWAIT to ensure it completes before requests)
-    try:
-        auth_service = get_auth_service()
-        print("[STARTUP] Pre-warming authentication...")
-        await auth_service.login_and_capture_state()
-        cookies = auth_service.get_cookies_dict()
-        if cookies:
-            print(f"[STARTUP] Auth ready: {len(cookies)} cookies captured")
-        else:
-            print("[STARTUP] Warning: Auth completed but no cookies captured")
-    except Exception as e:
-        logger.error("auth_preload_error", error=str(e))
-        print(f"[STARTUP] Auth pre-warm failed: {e}")
+    # LAZY AUTH: Authentication is now triggered on-demand when:
+    # 1. User downloads a Hammer file (needs API access)
+    # 2. User clicks "Start Browser Testing" (needs browser auth)
+    # This reduces startup time and resource usage
+    print("[STARTUP] Lazy auth enabled - authentication will happen on-demand")
         
     yield
     logger.info("app_shutting_down")
@@ -107,6 +107,131 @@ Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
+
+# ==================== AUTHENTICATION ENDPOINTS ====================
+
+class GoogleAuthRequest(BaseModel):
+    """Request model for Google OAuth login."""
+    id_token: str
+
+
+class AuthResponse(BaseModel):
+    """Response model for authentication."""
+    token: str
+    user: dict
+
+
+@app.post("/auth/google", response_model=AuthResponse)
+async def auth_google(request: GoogleAuthRequest):
+    """
+    Authenticate with Google OAuth.
+    
+    Receives Google ID token from frontend, verifies with Google,
+    validates email domain (@graphiteconnect.com only), and returns
+    a session JWT for subsequent requests.
+    """
+    auth_service = get_google_auth_service()
+    
+    # Verify Google token and check domain
+    user_info = auth_service.verify_google_token(request.id_token)
+    
+    # Create internal session token
+    session_token = auth_service.create_session_token(user_info)
+    
+    return AuthResponse(
+        token=session_token,
+        user={
+            "email": user_info["email"],
+            "name": user_info["name"],
+            "picture": user_info["picture"],
+        }
+    )
+
+
+@app.get("/auth/verify")
+async def auth_verify(current_user: dict = Depends(get_current_user)):
+    """
+    Verify current session token and return user info.
+    
+    Use this endpoint to check if user is still authenticated
+    and to get current user details.
+    """
+    return {
+        "authenticated": True,
+        "user": current_user,
+    }
+
+
+@app.post("/auth/logout")
+async def auth_logout(current_user: dict = Depends(get_current_user)):
+    """
+    Logout endpoint (for future server-side session invalidation).
+    
+    Currently just acknowledges logout - token invalidation happens
+    client-side by removing from localStorage.
+    """
+    print(f"[AUTH] User logged out: {current_user.get('email', 'unknown')}")
+    return {"status": "logged_out"}
+
+
+class GraphiteAuthResponse(BaseModel):
+    """Response model for Graphite authentication."""
+    status: str
+    cached: bool
+    jwt_available: bool
+    cookies_count: int
+
+
+@app.post("/auth/graphite/init", response_model=GraphiteAuthResponse)
+async def init_graphite_auth(current_user: dict = Depends(get_current_user_optional)):
+    """
+    Initialize Graphite authentication on-demand (lazy auth).
+    
+    This endpoint is called when:
+    1. User downloads a Hammer file (needs API access)
+    2. User clicks "Start Browser Testing" (needs browser auth)
+    
+    Returns cached auth if already authenticated, otherwise performs login.
+    """
+    auth_service = get_auth_service()
+    
+    # Check if already authenticated
+    existing_jwt = auth_service.get_jwt_token()
+    existing_cookies = auth_service.get_cookies_dict()
+    
+    if existing_jwt or existing_cookies:
+        print(f"[LAZY AUTH] Using cached auth (JWT: {bool(existing_jwt)}, Cookies: {len(existing_cookies)})")
+        return GraphiteAuthResponse(
+            status="already_authenticated",
+            cached=True,
+            jwt_available=bool(existing_jwt),
+            cookies_count=len(existing_cookies)
+        )
+    
+    # Perform login
+    print("[LAZY AUTH] No cached auth found, performing login...")
+    try:
+        await auth_service.login_and_capture_state()
+        
+        jwt_token = auth_service.get_jwt_token()
+        cookies = auth_service.get_cookies_dict()
+        
+        if jwt_token or cookies:
+            print(f"[LAZY AUTH] ✅ Auth successful (JWT: {bool(jwt_token)}, Cookies: {len(cookies)})")
+            return GraphiteAuthResponse(
+                status="authenticated",
+                cached=False,
+                jwt_available=bool(jwt_token),
+                cookies_count=len(cookies)
+            )
+        else:
+            print("[LAZY AUTH] ⚠️ Auth completed but no credentials captured")
+            raise HTTPException(status_code=401, detail="Authentication failed - no credentials captured")
+            
+    except Exception as e:
+        print(f"[LAZY AUTH] ❌ Auth failed: {e}")
+        raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
 
 
 @app.get("/workflows")
@@ -495,12 +620,17 @@ class HammerDownloadRequest(BaseModel):
 
 
 @app.post("/hammer/download")
-async def download_hammer_direct(request: HammerDownloadRequest):
+async def download_hammer_direct(
+    request: HammerDownloadRequest,
+    current_user: dict = Depends(get_current_user_optional)
+):
     """
     Download and index a hammer file directly via Graphite API.
     
     This bypasses browser automation and directly calls the Graphite
     history API to fetch the latest hammer file for a company.
+    
+    Multi-user support: Uses user's namespace for isolation.
     
     Args:
         company: Company name, ID, or alias (e.g., "western", "US66254")
@@ -508,6 +638,14 @@ async def download_hammer_direct(request: HammerDownloadRequest):
         auth_cookie: Optional authentication cookie
     """
     try:
+        # Get user ID for namespace isolation
+        user_id = None
+        if current_user:
+            user_id = current_user.get("sub") or current_user.get("email")
+            print(f"[HAMMER] Indexing for user: {user_id}")
+        else:
+            print("[HAMMER] Warning: No authenticated user, using default namespace")
+        
         # Get auth credentials - prioritize JWT token over cookies
         auth_cookie = request.auth_cookie
         jwt_token = None
@@ -540,10 +678,11 @@ async def download_hammer_direct(request: HammerDownloadRequest):
         
         downloader = get_hammer_downloader(auth_cookie=auth_cookie, jwt_token=jwt_token)
         
-        # Run the download and index pipeline
+        # Run the download and index pipeline with user_id for namespace
         result = await downloader.download_and_index(
             company_query=request.company,
-            clear_existing=request.clear_existing
+            clear_existing=request.clear_existing,
+            user_id=user_id  # Pass user_id for namespace isolation
         )
         
         if result.get("success"):
@@ -562,6 +701,52 @@ async def download_hammer_direct(request: HammerDownloadRequest):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Hammer download failed: {str(e)}")
+
+
+@app.get("/hammer/metadata")
+async def get_hammer_metadata(current_user: dict = Depends(get_current_user_optional)):
+    """
+    Get metadata about the currently indexed hammer for the user.
+    
+    Returns company name, ID, indexed date, and Jira label match.
+    Use this to display hammer info in the UI header.
+    """
+    from session_service import get_session_service
+    
+    session_service = get_session_service()
+    
+    if not current_user:
+        return {
+            "indexed": False,
+            "message": "No authenticated user"
+        }
+    
+    user_id = current_user.get("sub") or current_user.get("email")
+    
+    if not user_id:
+        return {
+            "indexed": False,
+            "message": "Could not determine user ID"
+        }
+    
+    metadata = session_service.get_company_metadata(user_id)
+    
+    if metadata:
+        return {
+            "indexed": True,
+            "company_id": metadata.company_id,
+            "company_name": metadata.company_name,
+            "indexed_at": metadata.indexed_at,
+            "hammer_filename": metadata.hammer_filename,
+            "jira_label": metadata.jira_label,
+            "record_count": metadata.record_count,
+            "namespace": session_service.get_user_namespace(user_id)
+        }
+    else:
+        return {
+            "indexed": False,
+            "message": "No hammer indexed for this user"
+        }
 
 
 @app.get("/hammer/download/status/{company_id}")
@@ -709,6 +894,7 @@ THIS IS AUTOMATIC - NO BROWSER ACTIONS NEEDED!
         raise HTTPException(status_code=500, detail=f"Failed to index workflow: {str(e)}")
 
 
+@app.websocket("/ws")
 @app.websocket("/ws/agent")
 @app.websocket("/ws/training")
 async def websocket_endpoint(websocket: WebSocket):

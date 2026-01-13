@@ -1,0 +1,23 @@
+GPT-5-NANO-2025-08-07 CSV ANALYSIS RESULT
+============================================================
+
+Resumen de hallazgo
+- Se encontró 1 pregunta relacionada con AI (Artificial Intelligence) en el CSV.
+
+Detalles de la pregunta AI encontrada
+- Question ID: IT_Certification_Link_AI
+- Label (texto de la pregunta): AI Data
+- UI Condition: 1="ReferenceOnly"
+- Informacion relevante:
+  - Group: ITCert
+  - Question Type: Information
+  - Document file label: (vacío)
+  - Search Name: (vacío)
+  - Owner: US66254
+  - Relación con otros Campos: Es una entrada de tipo Information enfocada a datos de AI (AI Data) dentro del grupo de certificaciones IT (ITCert); aparece con la condición de UI “ReferenceOnly”, lo que sugiere que es información de referencia y no una entrada de recopilación de datos activa en la UI.
+  - Notas extra: Formato indica que es una entrada de AI data para la certificación IT, sin una clave de respuesta (Answer Key).  
+
+Si quieres, puedo ampliar con un listado de otros campos asociados para cada fila (por ejemplo, agrupación, formato de entrada, restricciones de visibilidad, etc.) o buscar otras posibles incidencias relacionadas con AI en otros textos del CSV.
+
+============================================================
+Total tokens: 18079

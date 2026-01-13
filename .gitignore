@@ -151,6 +151,5 @@ agent-ui/build/
 agent-backend/build/
 agent-backend/__pycache__/
 data/
-tests/
 agent-ui/package-lock.json
 agent-ui/package-lock.json

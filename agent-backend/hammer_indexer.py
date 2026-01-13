@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pinecone_service import PineconeService, IndexType
 from hammer_etl import HammerETL, HammerRow, is_hammer_file
+from session_service import get_session_service, CompanyMetadata
 from config import MRL_DIMENSION
 
 
@@ -45,8 +46,10 @@ class HammerIndexer:
             on_progress: Optional callback for progress updates (message, percentage)
         """
         self.pinecone_service = PineconeService()
+        self.session_service = get_session_service()
         self.on_progress = on_progress or (lambda msg, pct: None)
         self._etl: Optional[HammerETL] = None
+        self._current_namespace: Optional[str] = None
         print("[INDEXER] HammerIndexer initialized")
     
     @property
@@ -56,17 +59,34 @@ class HammerIndexer:
             self._etl = HammerETL(on_progress=self.on_progress)
         return self._etl
     
-    def index_hammer(self, file_path: str, clear_existing: bool = True) -> dict:
+    def index_hammer(
+        self, 
+        file_path: str, 
+        user_id: str = None,
+        company_id: str = None,
+        company_name: str = None,
+        clear_existing: bool = True
+    ) -> dict:
         """
         Complete hammer indexing pipeline from local file.
         
         Args:
             file_path: Path to the .xlsm file
-            clear_existing: If True, clear existing hammer data first
+            user_id: User identifier for namespace isolation
+            company_id: Company ID from hammer (e.g., "US66254")
+            company_name: Company name (e.g., "Western Digital")
+            clear_existing: If True, clear existing hammer data in user's namespace
             
         Returns:
-            dict with indexing results
+            dict with indexing results including company metadata
         """
+        # Get user namespace
+        namespace = ""
+        if user_id:
+            namespace = self.session_service.get_user_namespace(user_id)
+            self._current_namespace = namespace
+            print(f"[INDEXER] Using namespace: {namespace} for user: {user_id}")
+        
         print("\n" + "=" * 60)
         print("[HAMMER INDEXER] Starting Indexing Pipeline")
         print("=" * 60)
@@ -75,11 +95,11 @@ class HammerIndexer:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Hammer file not found: {file_path}")
         
-        # Step 1: Clear existing data if requested
+        # Step 1: Clear existing data if requested (only in user's namespace)
         if clear_existing:
             self.on_progress("Clearing existing data...", 0.05)
-            print("\n[STEP 1] Clearing existing hammer-index data...")
-            self._clear_hammer_index()
+            print(f"\n[STEP 1] Clearing hammer-index data in namespace: {namespace or 'default'}...")
+            self._clear_hammer_index(namespace=namespace)
         
         # Step 2: Run DuckDB ETL
         self.on_progress("Running ETL pipeline...", 0.1)
@@ -119,10 +139,10 @@ class HammerIndexer:
         
         print(f"[OK] Generated {len(embeddings)} embeddings")
         
-        # Step 4: Upsert to Pinecone
+        # Step 4: Upsert to Pinecone (in user's namespace)
         self.on_progress("Indexing to Pinecone...", 0.7)
-        print("\n[STEP 4] Upserting to hammer-index...")
-        self._upsert_rows(etl_result.rows, embeddings)
+        print(f"\n[STEP 4] Upserting to hammer-index (namespace: {namespace or 'default'})...")
+        self._upsert_rows(etl_result.rows, embeddings, namespace=namespace)
         
         # Get final stats
         self.on_progress("Finalizing...", 0.95)
@@ -145,6 +165,27 @@ class HammerIndexer:
         
         self.on_progress("Complete!", 1.0)
         
+        # Store company metadata for session
+        company_metadata = None
+        if user_id:
+            # Match company to Jira label
+            jira_label = None
+            if company_name:
+                try:
+                    from tools.jira import match_company_to_label
+                    jira_label = match_company_to_label(company_name)
+                except Exception as e:
+                    print(f"[INDEXER] Could not match Jira label: {e}")
+            
+            company_metadata = self.session_service.store_company_metadata(
+                user_id=user_id,
+                company_id=company_id or "unknown",
+                company_name=company_name or etl_result.file_name,
+                hammer_filename=etl_result.file_name,
+                record_count=len(etl_result.rows),
+                jira_label=jira_label
+            )
+        
         return {
             "success": True,
             "records_count": len(etl_result.rows),
@@ -152,6 +193,8 @@ class HammerIndexer:
             "file_name": etl_result.file_name,
             "indexed_at": datetime.now().isoformat(),
             "etl_time_ms": etl_result.processing_time_ms,
+            "namespace": namespace,
+            "company_metadata": company_metadata.to_dict() if company_metadata else None,
             "validation": {
                 "errors": etl_result.validation.errors,
                 "warnings": etl_result.validation.warnings,
@@ -159,7 +202,15 @@ class HammerIndexer:
             }
         }
     
-    def index_hammer_from_bytes(self, data: bytes, filename: str, clear_existing: bool = True) -> dict:
+    def index_hammer_from_bytes(
+        self, 
+        data: bytes, 
+        filename: str, 
+        user_id: str = None,
+        company_id: str = None,
+        company_name: str = None,
+        clear_existing: bool = True
+    ) -> dict:
         """
         Complete hammer indexing pipeline from bytes.
         
@@ -169,21 +220,31 @@ class HammerIndexer:
         Args:
             data: Excel file contents as bytes
             filename: Original filename for reference
+            user_id: User identifier for namespace isolation
+            company_id: Company ID for metadata
+            company_name: Company name for metadata and Jira label matching
             clear_existing: If True, clear existing hammer data first
             
         Returns:
-            dict with indexing results
+            dict with indexing results including company metadata
         """
+        # Get user namespace
+        namespace = ""
+        if user_id:
+            namespace = self.session_service.get_user_namespace(user_id)
+            self._current_namespace = namespace
+            print(f"[INDEXER] Using namespace: {namespace} for user: {user_id}")
+        
         print("\n" + "=" * 60)
         print("[HAMMER INDEXER] Starting Indexing Pipeline (from bytes)")
         print("=" * 60)
         print(f"[FILE] {filename} ({len(data)} bytes)")
         
-        # Step 1: Clear existing data if requested
+        # Step 1: Clear existing data if requested (only in user's namespace)
         if clear_existing:
             self.on_progress("Clearing existing data...", 0.05)
-            print("\n[STEP 1] Clearing existing hammer-index data...")
-            self._clear_hammer_index()
+            print(f"\n[STEP 1] Clearing hammer-index data in namespace: {namespace or 'default'}...")
+            self._clear_hammer_index(namespace=namespace)
         
         # Step 2: Run DuckDB ETL
         self.on_progress("Running ETL pipeline...", 0.1)
@@ -209,10 +270,10 @@ class HammerIndexer:
         
         print(f"[OK] Generated {len(embeddings)} embeddings")
         
-        # Step 4: Upsert to Pinecone
+        # Step 4: Upsert to Pinecone (in user's namespace)
         self.on_progress("Indexing to Pinecone...", 0.7)
-        print("\n[STEP 4] Upserting to hammer-index...")
-        self._upsert_rows(etl_result.rows, embeddings)
+        print(f"\n[STEP 4] Upserting to hammer-index (namespace: {namespace or 'default'})...")
+        self._upsert_rows(etl_result.rows, embeddings, namespace=namespace)
         
         # Get final stats
         self.on_progress("Finalizing...", 0.95)
@@ -224,10 +285,33 @@ class HammerIndexer:
         print("=" * 60)
         print(f"   Records indexed: {len(etl_result.rows)}")
         print(f"   Total vectors: {stats.get('total_vector_count', 'N/A')}")
+        if namespace:
+            print(f"   Namespace: {namespace}")
         
         sheets = set(row.sheet_name for row in etl_result.rows)
         
         self.on_progress("Complete!", 1.0)
+        
+        # Store company metadata for session
+        company_metadata = None
+        if user_id:
+            # Match company to Jira label
+            jira_label = None
+            if company_name:
+                try:
+                    from tools.jira import match_company_to_label
+                    jira_label = match_company_to_label(company_name)
+                except Exception as e:
+                    print(f"[INDEXER] Could not match Jira label: {e}")
+            
+            company_metadata = self.session_service.store_company_metadata(
+                user_id=user_id,
+                company_id=company_id or "unknown",
+                company_name=company_name or filename,
+                hammer_filename=filename,
+                record_count=len(etl_result.rows),
+                jira_label=jira_label
+            )
         
         return {
             "success": True,
@@ -236,20 +320,36 @@ class HammerIndexer:
             "file_name": filename,
             "indexed_at": datetime.now().isoformat(),
             "etl_time_ms": etl_result.processing_time_ms,
+            "namespace": namespace,
+            "company_metadata": company_metadata.to_dict() if company_metadata else None,
         }
     
-    def _clear_hammer_index(self):
-        """Clear all vectors from hammer-index (includes both dense + sparse)."""
+    def _clear_hammer_index(self, namespace: str = ""):
+        """Clear vectors from hammer-index in a specific namespace.
+        
+        Args:
+            namespace: Namespace to clear (empty = default namespace)
+        """
         try:
             index = self.pinecone_service.get_index(IndexType.HAMMER)
-            stats_before = index.describe_index_stats()
-            count_before = stats_before.total_vector_count
             
-            if count_before > 0:
-                index.delete(delete_all=True)
-                print(f"   Deleted {count_before} vectors from hammer-index")
+            if namespace:
+                # Delete only vectors in this namespace
+                try:
+                    index.delete(delete_all=True, namespace=namespace)
+                    print(f"   Deleted vectors in namespace: {namespace}")
+                except Exception as e:
+                    print(f"   Warning: Could not clear namespace {namespace}: {e}")
             else:
-                print("   hammer-index was already empty")
+                # Legacy behavior: delete all (for backwards compatibility)
+                stats_before = index.describe_index_stats()
+                count_before = stats_before.total_vector_count
+                
+                if count_before > 0:
+                    index.delete(delete_all=True)
+                    print(f"   Deleted {count_before} vectors from hammer-index")
+                else:
+                    print("   hammer-index was already empty")
         except Exception as e:
             print(f"   Warning: Could not clear index: {e}")
     
@@ -293,11 +393,16 @@ class HammerIndexer:
         
         return all_embeddings
     
-    def _upsert_rows(self, rows: List[HammerRow], embeddings: List[List[float]]):
+    def _upsert_rows(self, rows: List[HammerRow], embeddings: List[List[float]], namespace: str = ""):
         """Upsert validated rows to hammer-index using HYBRID SEARCH.
         
         Uses native Pinecone hybrid search with both dense (semantic) and 
         sparse (keyword) vectors in the SAME index.
+        
+        Args:
+            rows: Validated HammerRow objects
+            embeddings: Pre-computed dense embeddings
+            namespace: Pinecone namespace for user isolation
         """
         from hybrid_search import get_hybrid_search_service
         
@@ -330,7 +435,8 @@ class HammerIndexer:
             count = hybrid_service.hybrid_upsert(
                 index_name="hammer-index",
                 records=records,
-                text_field="searchable_text"
+                text_field="searchable_text",
+                namespace=namespace  # User-specific namespace
             )
             
             total_upserted += count
