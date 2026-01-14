@@ -156,7 +156,8 @@ class StepExecutor:
                 )
 
                 # === STEP 4: Locate element using Gemini Vision ===
-                if step.action not in [SemanticActionType.NAVIGATE, SemanticActionType.WAIT, SemanticActionType.VERIFY]:
+                # KEY_PRESS doesn't need element location - it presses keys directly
+                if step.action not in [SemanticActionType.NAVIGATE, SemanticActionType.WAIT, SemanticActionType.VERIFY, SemanticActionType.KEY_PRESS]:
                     if step.target_description:
                         location = await self.vision_verifier.locate_element(
                             screenshot_before,
@@ -343,6 +344,8 @@ class StepExecutor:
             return f"Wait for condition: {step.expected_visual}"
         elif action == SemanticActionType.VERIFY:
             return f"Verify visual state: {step.expected_visual}"
+        elif action == SemanticActionType.KEY_PRESS:
+            return f"Press keyboard key(s): {step.value}"
         else:
             return f"Unknown action: {action}"
 
@@ -373,6 +376,13 @@ class StepExecutor:
 
         if action == SemanticActionType.VERIFY:
             # Verify action - no browser action needed, verification happens later
+            return
+
+        if action == SemanticActionType.KEY_PRESS:
+            # Direct keyboard key press - no element location needed
+            key = step.value or "Enter"  # Default to Enter if no value provided
+            logger.info("key_press_action", key=key)
+            await self.browser.page.keyboard.press(key)
             return
 
         # For input, click, select - use Gemini Computer Use

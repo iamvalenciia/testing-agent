@@ -132,6 +132,7 @@ class SemanticActionType(str, Enum):
     SELECT = "select"           # Select from dropdown (located visually)
     WAIT = "wait"               # Wait for a condition
     VERIFY = "verify"           # Visual verification only, no action
+    KEY_PRESS = "key_press"     # Press keyboard key(s) directly (no element location needed)
 
 
 class StepStatus(str, Enum):
