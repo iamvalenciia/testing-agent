@@ -57,17 +57,21 @@ class VisionVerifier:
     """
     Visual verification engine using Gemini Vision.
 
-    Uses the PRIMARY model for:
+    Uses VISION_MODEL for:
     - Element location
-    - Complex visual verification
+    - Visual verification
+    - Screen analysis
 
-    Uses a SECONDARY lightweight model for:
+    Uses a LIGHTWEIGHT model for:
     - Quick sanity checks
     - Confidence scoring
+
+    NOTE: gemini-2.5-computer-use-preview requires Computer Use tools.
+    For pure visual analysis (no actions), we use gemini-2.0-flash instead.
     """
 
-    # Primary model for computer use and visual understanding
-    PRIMARY_MODEL = "gemini-2.5-computer-use-preview-10-2025"
+    # Model for visual analysis (does NOT require Computer Use tools)
+    VISION_MODEL = "gemini-2.0-flash"
 
     # Secondary lightweight model for quick verification
     SECONDARY_MODEL = "gemini-2.0-flash-lite"
@@ -136,7 +140,7 @@ If the element is NOT found, explain what you DO see that might be similar or re
 
         try:
             response = await self._call_vision_model(
-                model=self.PRIMARY_MODEL,
+                model=self.VISION_MODEL,
                 prompt=prompt,
                 screenshot_base64=screenshot_base64
             )
@@ -212,7 +216,7 @@ RESPONSE FORMAT (JSON):
 
 Be thorough and critical. A false positive is worse than a false negative."""
 
-        model = self.SECONDARY_MODEL if use_lightweight_model else self.PRIMARY_MODEL
+        model = self.SECONDARY_MODEL if use_lightweight_model else self.VISION_MODEL
 
         try:
             response = await self._call_vision_model(
@@ -421,7 +425,7 @@ Be objective and thorough."""
         """Get verification metrics."""
         return {
             "total_calls": self._call_count,
-            "primary_model": self.PRIMARY_MODEL,
+            "vision_model": self.VISION_MODEL,
             "secondary_model": self.SECONDARY_MODEL
         }
 
