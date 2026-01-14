@@ -293,64 +293,72 @@ watch(() => props.currentStepId, async (newId) => {
   height: 100%;
   background: var(--bg-primary, #0d0d1a);
   color: var(--text-primary, #fff);
+  min-height: 0;
 }
 
 /* Header */
 .pipeline-header {
-  padding: 20px 24px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border-color, #333);
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 16px;
+  gap: 8px;
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .test-info h3 {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: 0.85rem;
   color: var(--text-primary, #fff);
   font-weight: 600;
 }
 
 .test-info p {
-  margin: 6px 0 0;
-  font-size: 0.85rem;
+  margin: 3px 0 0;
+  font-size: 0.7rem;
   color: var(--text-secondary, #999);
 }
 
 .tags {
   display: flex;
-  gap: 6px;
-  margin-top: 8px;
+  gap: 4px;
+  margin-top: 4px;
 }
 
 .tag {
-  font-size: 0.7rem;
-  padding: 2px 8px;
+  font-size: 0.6rem;
+  padding: 1px 6px;
   background: var(--bg-tertiary, #1a1a2e);
   border: 1px solid var(--border-color, #333);
-  border-radius: 12px;
+  border-radius: 8px;
   color: var(--text-secondary, #999);
 }
 
 .pipeline-controls {
   display: flex;
-  gap: 10px;
+  gap: 6px;
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .btn {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 18px;
+  gap: 4px;
+  padding: 6px 10px;
   border: none;
-  border-radius: 8px;
-  font-size: 0.85rem;
+  border-radius: 5px;
+  font-size: 0.65rem;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
+}
+
+.btn svg {
+  width: 12px;
+  height: 12px;
 }
 
 .btn:disabled {
@@ -365,7 +373,6 @@ watch(() => props.currentStepId, async (newId) => {
 
 .btn-primary:hover:not(:disabled) {
   background: #3dbdb5;
-  transform: translateY(-1px);
 }
 
 .btn-warning {
@@ -386,64 +393,61 @@ watch(() => props.currentStepId, async (newId) => {
   background: #dc2626;
 }
 
-.btn svg {
-  flex-shrink: 0;
-}
-
 /* Progress Overview */
 .progress-overview {
-  padding: 16px 24px;
+  padding: 8px 12px;
   background: var(--bg-secondary, #151528);
   border-bottom: 1px solid var(--border-color, #333);
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 12px;
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .progress-bar-container {
   flex: 1;
-  min-width: 200px;
+  min-width: 100px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
 .progress-bar {
   flex: 1;
-  height: 8px;
+  height: 4px;
   background: var(--bg-tertiary, #1a1a2e);
-  border-radius: 4px;
+  border-radius: 2px;
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--primary, #4ecdc4), #22c55e);
-  border-radius: 4px;
+  border-radius: 2px;
   transition: width 0.3s ease;
 }
 
 .progress-label {
-  font-size: 0.8rem;
+  font-size: 0.65rem;
   color: var(--text-secondary, #999);
   white-space: nowrap;
 }
 
 .progress-stats {
   display: flex;
-  gap: 20px;
+  gap: 10px;
 }
 
 .stat {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 0.8rem;
+  gap: 3px;
+  font-size: 0.65rem;
 }
 
 .stat-icon {
-  font-size: 1rem;
+  font-size: 0.75rem;
 }
 
 .stat.passed .stat-icon { color: #22c55e; }
@@ -452,7 +456,7 @@ watch(() => props.currentStepId, async (newId) => {
 
 .stat-value {
   font-weight: 700;
-  font-size: 1rem;
+  font-size: 0.75rem;
 }
 
 .stat.passed .stat-value { color: #22c55e; }
@@ -461,16 +465,18 @@ watch(() => props.currentStepId, async (newId) => {
 
 .stat-label {
   color: var(--text-secondary, #999);
+  display: none;
 }
 
 /* Pipeline Steps - Vertical Layout */
 .pipeline-steps {
   flex: 1;
   overflow-y: auto;
-  padding: 24px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 0;
+  min-height: 0;
 }
 
 .pipeline-step {
@@ -483,8 +489,8 @@ watch(() => props.currentStepId, async (newId) => {
 .connector-vertical {
   display: flex;
   justify-content: center;
-  padding: 0 0 0 40px;
-  height: 24px;
+  padding: 0 0 0 24px;
+  height: 12px;
 }
 
 .connector-line {
@@ -504,13 +510,13 @@ watch(() => props.currentStepId, async (newId) => {
 
 .connector-vertical.running .connector-line {
   background: linear-gradient(180deg, #f0ad4e 0%, #f0ad4e 50%, transparent 50%, transparent 100%);
-  background-size: 2px 8px;
+  background-size: 2px 6px;
   animation: dashedLine 0.5s linear infinite;
 }
 
 @keyframes dashedLine {
   to {
-    background-position: 0 8px;
+    background-position: 0 6px;
   }
 }
 
@@ -522,67 +528,73 @@ watch(() => props.currentStepId, async (newId) => {
   align-items: center;
   justify-content: center;
   color: var(--text-secondary, #999);
-  padding: 48px;
+  padding: 24px;
   text-align: center;
 }
 
 .empty-icon {
-  margin-bottom: 20px;
+  margin-bottom: 12px;
   opacity: 0.4;
   color: var(--text-secondary, #666);
 }
 
+.empty-icon svg {
+  width: 48px;
+  height: 48px;
+}
+
 .empty-state h4 {
-  margin: 0 0 8px;
+  margin: 0 0 4px;
   color: var(--text-primary, #fff);
-  font-size: 1.1rem;
+  font-size: 0.85rem;
 }
 
 .empty-state p {
   margin: 0;
-  font-size: 0.9rem;
-  max-width: 300px;
+  font-size: 0.7rem;
+  max-width: 200px;
 }
 
 /* Summary Panel */
 .summary-panel {
-  padding: 20px 24px;
+  padding: 10px 12px;
   border-top: 1px solid var(--border-color, #333);
   background: var(--bg-secondary, #151528);
+  flex-shrink: 0;
 }
 
 .summary-panel.pass {
-  border-top: 3px solid #22c55e;
+  border-top: 2px solid #22c55e;
 }
 
 .summary-panel.fail {
-  border-top: 3px solid #ef4444;
+  border-top: 2px solid #ef4444;
 }
 
 .summary-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: 8px;
 }
 
 .summary-title {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
 .summary-title h4 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 0.75rem;
 }
 
 .overall-status-badge {
-  padding: 4px 12px;
-  border-radius: 4px;
-  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 0.6rem;
   font-weight: 700;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
 }
 
 .overall-status-badge.pass {
@@ -596,13 +608,13 @@ watch(() => props.currentStepId, async (newId) => {
 }
 
 .execution-time {
-  font-size: 0.8rem;
+  font-size: 0.65rem;
   color: var(--text-secondary, #999);
 }
 
 .summary-stats {
   display: flex;
-  gap: 32px;
+  gap: 16px;
 }
 
 .summary-stat {
@@ -612,7 +624,7 @@ watch(() => props.currentStepId, async (newId) => {
 }
 
 .summary-value {
-  font-size: 2rem;
+  font-size: 1.25rem;
   font-weight: 700;
 }
 
@@ -621,9 +633,9 @@ watch(() => props.currentStepId, async (newId) => {
 .summary-value.skip { color: #777; }
 
 .summary-label {
-  font-size: 0.75rem;
+  font-size: 0.6rem;
   color: var(--text-secondary, #999);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
 }
 </style>

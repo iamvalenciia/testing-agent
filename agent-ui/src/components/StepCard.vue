@@ -167,11 +167,11 @@ function handleClick() {
 .step-card {
   background: var(--bg-tertiary, #1a1a2e);
   border: 1px solid var(--border-color, #333);
-  border-radius: 12px;
-  padding: 16px;
+  border-radius: 8px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   transition: all 0.2s ease;
   position: relative;
 }
@@ -187,56 +187,56 @@ function handleClick() {
 
 .step-card.active {
   border-color: var(--primary, #4ecdc4);
-  box-shadow: 0 0 0 2px rgba(78, 205, 196, 0.3);
+  box-shadow: 0 0 0 1px rgba(78, 205, 196, 0.3);
 }
 
 /* Status colors - left border indicator */
 .step-card.pending {
-  border-left: 4px solid #666;
+  border-left: 3px solid #666;
 }
 
 .step-card.running {
-  border-left: 4px solid #f0ad4e;
+  border-left: 3px solid #f0ad4e;
   animation: cardPulse 1.5s infinite;
 }
 
 .step-card.pass {
-  border-left: 4px solid #22c55e;
+  border-left: 3px solid #22c55e;
   background: rgba(34, 197, 94, 0.05);
 }
 
 .step-card.fail {
-  border-left: 4px solid #ef4444;
+  border-left: 3px solid #ef4444;
   background: rgba(239, 68, 68, 0.05);
 }
 
 .step-card.skipped {
-  border-left: 4px solid #777;
+  border-left: 3px solid #777;
   opacity: 0.6;
 }
 
 @keyframes cardPulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(240, 173, 78, 0.4); }
-  50% { box-shadow: 0 0 0 4px rgba(240, 173, 78, 0.1); }
+  50% { box-shadow: 0 0 0 2px rgba(240, 173, 78, 0.1); }
 }
 
 /* Step Header */
 .step-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
 .step-number-badge {
-  width: 32px;
-  height: 32px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: var(--bg-secondary, #252540);
   border: 2px solid var(--border-color, #444);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.85rem;
+  font-size: 0.65rem;
   font-weight: 700;
   color: var(--text-primary, #fff);
   flex-shrink: 0;
@@ -264,18 +264,18 @@ function handleClick() {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .action-type {
-  font-size: 0.8rem;
+  font-size: 0.65rem;
   font-weight: 700;
   color: var(--primary, #4ecdc4);
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
 }
 
 .target-desc, .target-url {
-  font-size: 0.8rem;
+  font-size: 0.6rem;
   color: var(--text-secondary, #aaa);
   font-family: 'JetBrains Mono', monospace;
   white-space: nowrap;
@@ -285,8 +285,8 @@ function handleClick() {
 
 /* Status Icon */
 .status-icon {
-  width: 28px;
-  height: 28px;
+  width: 20px;
+  height: 20px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -294,8 +294,8 @@ function handleClick() {
 }
 
 .icon-pass {
-  width: 28px;
-  height: 28px;
+  width: 20px;
+  height: 20px;
   background: #22c55e;
   border-radius: 50%;
   display: flex;
@@ -304,14 +304,14 @@ function handleClick() {
 }
 
 .icon-pass svg {
-  width: 18px;
-  height: 18px;
+  width: 12px;
+  height: 12px;
   color: #fff;
 }
 
 .icon-fail {
-  width: 28px;
-  height: 28px;
+  width: 20px;
+  height: 20px;
   background: #ef4444;
   border-radius: 50%;
   display: flex;
@@ -320,31 +320,31 @@ function handleClick() {
 }
 
 .icon-fail svg {
-  width: 16px;
-  height: 16px;
+  width: 12px;
+  height: 12px;
   color: #fff;
 }
 
 .icon-running {
-  width: 28px;
-  height: 28px;
+  width: 20px;
+  height: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
 .spinner-ring {
-  width: 24px;
-  height: 24px;
-  border: 3px solid rgba(240, 173, 78, 0.3);
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(240, 173, 78, 0.3);
   border-top-color: #f0ad4e;
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
 
 .icon-skipped {
-  width: 28px;
-  height: 28px;
+  width: 20px;
+  height: 20px;
   background: #555;
   border-radius: 50%;
   display: flex;
@@ -353,22 +353,22 @@ function handleClick() {
 }
 
 .icon-skipped svg {
-  width: 16px;
-  height: 16px;
+  width: 12px;
+  height: 12px;
   color: #999;
 }
 
 .icon-pending {
-  width: 28px;
-  height: 28px;
+  width: 20px;
+  height: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
 .icon-pending svg {
-  width: 24px;
-  height: 24px;
+  width: 16px;
+  height: 16px;
   color: #666;
 }
 
@@ -378,18 +378,18 @@ function handleClick() {
 
 /* Expected Visual */
 .expected-visual {
-  font-size: 0.8rem;
+  font-size: 0.6rem;
   color: var(--text-tertiary, #888);
-  padding: 10px 12px;
+  padding: 6px 8px;
   background: var(--bg-secondary, #151528);
-  border-radius: 6px;
-  line-height: 1.4;
+  border-radius: 4px;
+  line-height: 1.3;
 }
 
 .expected-visual .label {
   color: var(--text-secondary, #999);
   font-weight: 600;
-  margin-right: 6px;
+  margin-right: 4px;
 }
 
 .expected-visual .value {
@@ -399,8 +399,8 @@ function handleClick() {
 /* Screenshot Preview */
 .screenshot-preview {
   position: relative;
-  height: 120px;
-  border-radius: 8px;
+  height: 70px;
+  border-radius: 4px;
   overflow: hidden;
   cursor: pointer;
   border: 1px solid var(--border-color, #333);
@@ -434,41 +434,41 @@ function handleClick() {
 
 .view-label {
   color: white;
-  font-size: 0.8rem;
+  font-size: 0.6rem;
   font-weight: 600;
-  padding: 6px 12px;
+  padding: 4px 8px;
   background: rgba(78, 205, 196, 0.8);
-  border-radius: 4px;
+  border-radius: 3px;
 }
 
 /* Execution Details */
 .execution-details {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 }
 
 .error-message {
-  font-size: 0.75rem;
+  font-size: 0.55rem;
   color: #ef4444;
   background: rgba(239, 68, 68, 0.1);
-  padding: 8px 10px;
-  border-radius: 4px;
+  padding: 4px 6px;
+  border-radius: 3px;
   border-left: 2px solid #ef4444;
 }
 
 .execution-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 4px;
 }
 
 .confidence-badge,
 .retry-badge,
 .time-badge {
-  font-size: 0.7rem;
-  padding: 3px 8px;
-  border-radius: 4px;
+  font-size: 0.55rem;
+  padding: 2px 5px;
+  border-radius: 3px;
   background: var(--bg-secondary, #252540);
   color: var(--text-secondary, #999);
 }
@@ -481,10 +481,10 @@ function handleClick() {
 /* Run Step Button */
 .run-step-btn {
   position: absolute;
-  top: 12px;
-  right: 12px;
-  width: 32px;
-  height: 32px;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
   border: none;
   border-radius: 50%;
   background: var(--primary, #4ecdc4);
@@ -507,7 +507,7 @@ function handleClick() {
 }
 
 .run-step-btn svg {
-  width: 14px;
-  height: 14px;
+  width: 10px;
+  height: 10px;
 }
 </style>
