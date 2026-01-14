@@ -427,13 +427,21 @@ Execute this action now."""
                 )
             )
 
+            # Structure content with text FIRST, then image (required order for Computer Use)
+            contents = [
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_text(text=action_prompt),
+                        types.Part.from_bytes(data=image_data, mime_type="image/png")
+                    ]
+                )
+            ]
+
             response = await asyncio.to_thread(
                 self.client.models.generate_content,
                 model=self.COMPUTER_USE_MODEL,
-                contents=[
-                    types.Part.from_bytes(data=image_data, mime_type="image/png"),
-                    types.Part.from_text(text=action_prompt)
-                ],
+                contents=contents,
                 config=types.GenerateContentConfig(
                     tools=[computer_use_tool],
                     temperature=0.1,
@@ -587,13 +595,21 @@ class SemanticActionExecutor:
                 )
             )
 
+            # Structure content with text FIRST, then image (required order for Computer Use)
+            contents = [
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_text(text=prompt),
+                        types.Part.from_bytes(data=image_data, mime_type="image/png")
+                    ]
+                )
+            ]
+
             response = await asyncio.to_thread(
                 self.client.models.generate_content,
                 model=self.MODEL,
-                contents=[
-                    types.Part.from_bytes(data=image_data, mime_type="image/png"),
-                    types.Part.from_text(text=prompt)
-                ],
+                contents=contents,
                 config=types.GenerateContentConfig(
                     tools=[computer_use_tool],
                     temperature=0.1,
