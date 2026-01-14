@@ -420,6 +420,13 @@ Execute this action now."""
         try:
             image_data = base64.b64decode(screenshot_base64)
 
+            # Configure the Computer Use tool - REQUIRED for gemini-2.5-computer-use model
+            computer_use_tool = types.Tool(
+                computer_use=types.ComputerUse(
+                    environment=types.Environment.ENVIRONMENT_BROWSER
+                )
+            )
+
             response = await asyncio.to_thread(
                 self.client.models.generate_content,
                 model=self.COMPUTER_USE_MODEL,
@@ -428,6 +435,7 @@ Execute this action now."""
                     types.Part.from_text(text=action_prompt)
                 ],
                 config=types.GenerateContentConfig(
+                    tools=[computer_use_tool],
                     temperature=0.1,
                     max_output_tokens=1024
                 )
@@ -572,6 +580,13 @@ class SemanticActionExecutor:
         prompt = self._build_semantic_prompt(action, target_description, value, expected_result)
 
         try:
+            # Configure the Computer Use tool - REQUIRED for gemini-2.5-computer-use model
+            computer_use_tool = types.Tool(
+                computer_use=types.ComputerUse(
+                    environment=types.Environment.ENVIRONMENT_BROWSER
+                )
+            )
+
             response = await asyncio.to_thread(
                 self.client.models.generate_content,
                 model=self.MODEL,
@@ -580,6 +595,7 @@ class SemanticActionExecutor:
                     types.Part.from_text(text=prompt)
                 ],
                 config=types.GenerateContentConfig(
+                    tools=[computer_use_tool],
                     temperature=0.1,
                     max_output_tokens=2048
                 )

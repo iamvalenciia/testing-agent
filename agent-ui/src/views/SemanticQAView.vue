@@ -90,7 +90,22 @@ Example:
           <span v-if="validationResult.valid">
             Valid: {{ validationResult.total_steps }} steps detected
           </span>
-          <span v-else>{{ validationResult.error }}</span>
+          <span v-else class="validation-message">
+            {{ validationResult.error }}
+            <button
+              v-if="jsonParseError"
+              class="btn-show-error"
+              @click="toggleJsonError"
+              title="Show detailed error"
+            >
+              {{ showJsonError ? 'Hide' : 'Details' }}
+            </button>
+          </span>
+        </div>
+
+        <!-- JSON Parse Error Details -->
+        <div v-if="showJsonError && jsonParseError" class="json-error-details">
+          <code>{{ jsonParseError }}</code>
         </div>
 
         <!-- Execute Button -->
@@ -187,6 +202,8 @@ const testPlanStore = useTestPlanStore()
 const jsonInput = ref('')
 const validationResult = ref(null)
 const zoomedScreenshot = ref(null)
+const jsonParseError = ref(null)
+const showJsonError = ref(false)
 let validateTimeout = null
 
 // Computed
@@ -245,11 +262,39 @@ function loadSamplePlan() {
   validatePlan()
 }
 
+function autoFixJson(input) {
+  // Auto-fix common whitespace and formatting issues
+  let fixed = input
+
+  // Remove BOM and other invisible characters
+  fixed = fixed.replace(/^\uFEFF/, '')
+
+  // Replace various types of whitespace with standard space
+  fixed = fixed.replace(/[\u00A0\u2000-\u200B\u202F\u205F\u3000]/g, ' ')
+
+  // Replace smart quotes with standard quotes
+  fixed = fixed.replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, '"')
+  fixed = fixed.replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, "'")
+
+  // Trim leading/trailing whitespace from the entire input
+  fixed = fixed.trim()
+
+  // Try to fix trailing commas before } or ]
+  fixed = fixed.replace(/,(\s*[}\]])/g, '$1')
+
+  return fixed
+}
+
 function formatJson() {
   try {
-    const parsed = JSON.parse(jsonInput.value)
+    // First try to auto-fix common issues
+    const fixedInput = autoFixJson(jsonInput.value)
+    const parsed = JSON.parse(fixedInput)
     jsonInput.value = JSON.stringify(parsed, null, 2)
+    jsonParseError.value = null
+    showJsonError.value = false
   } catch (e) {
+    jsonParseError.value = e.message
     uiStore.showToast('Invalid JSON - cannot format', 'error')
   }
 }
@@ -267,11 +312,20 @@ function onJsonInput() {
 async function validatePlan() {
   if (!jsonInput.value.trim()) {
     validationResult.value = { valid: false, error: 'No test plan provided' }
+    jsonParseError.value = null
     return
   }
 
   try {
-    const testPlan = JSON.parse(jsonInput.value)
+    // Auto-fix common whitespace issues before parsing
+    const fixedInput = autoFixJson(jsonInput.value)
+    const testPlan = JSON.parse(fixedInput)
+    jsonParseError.value = null
+
+    // If auto-fix made changes, update the input
+    if (fixedInput !== jsonInput.value) {
+      jsonInput.value = fixedInput
+    }
 
     // Call backend validation
     const response = await fetch('http://localhost:8000/test-plans/validate', {
@@ -287,11 +341,17 @@ async function validatePlan() {
       testPlanStore.setTestPlan(testPlan)
     }
   } catch (e) {
+    jsonParseError.value = e.message
     validationResult.value = {
       valid: false,
-      error: e.message || 'Invalid JSON format'
+      error: 'Invalid JSON format',
+      parseError: e.message
     }
   }
+}
+
+function toggleJsonError() {
+  showJsonError.value = !showJsonError.value
 }
 
 function executeTestPlan() {
@@ -550,6 +610,44 @@ onUnmounted(() => {
 
 .validation-icon {
   font-size: 0.85rem;
+}
+
+.validation-message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.btn-show-error {
+  padding: 2px 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  color: #ef4444;
+  border-radius: 4px;
+  font-size: 0.6rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-show-error:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: #ef4444;
+}
+
+.json-error-details {
+  background: rgba(239, 68, 68, 0.1);
+  border-top: 1px solid rgba(239, 68, 68, 0.3);
+  padding: 8px 10px;
+  flex-shrink: 0;
+}
+
+.json-error-details code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.65rem;
+  color: #f87171;
+  word-break: break-all;
+  white-space: pre-wrap;
 }
 
 .btn-execute {
