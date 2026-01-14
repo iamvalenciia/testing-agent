@@ -42,9 +42,20 @@ from models import (
     ActionStep,
     WorkflowRecord,
     SessionContext,
+    # Semantic QA Execution models
+    TestPlan,
+    TestStep,
+    TestPlanExecutionRequest,
+    TestPlanExecutionResult,
+    TestPlanExecutionStatus,
+    StepExecutionResult,
+    StepStatus,
+    SemanticActionType,
 )
 from agent import ComputerUseAgent
 from browser import BrowserController
+from semantic_qa_agent import SemanticQAAgent, create_semantic_qa_agent, validate_test_plan
+from core.test_plan_parser import TestPlanParser
 from storage import save_workflow, load_workflow, list_workflows, delete_workflow
 from pinecone_service import PineconeService, IndexType
 from download_tracker import get_download_tracker
@@ -1832,6 +1843,437 @@ async def download_report(task_id: str):
         media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename=report_{task_id}.zip"}
     )
+
+
+# ==================== SEMANTIC QA EXECUTION ENDPOINTS ====================
+# These endpoints support the new vision-based, semantic QA execution system.
+
+
+class TestPlanValidateRequest(BaseModel):
+    """Request model for test plan validation."""
+    test_plan: dict
+
+
+class TestPlanExecuteRequest(BaseModel):
+    """Request model for test plan execution."""
+    test_plan: dict
+    start_from_step: int = 1
+    stop_on_failure: bool = True
+    max_retries_per_step: int = 3
+
+
+class SingleStepExecuteRequest(BaseModel):
+    """Request model for single step execution."""
+    step: dict
+    task_id: Optional[str] = None
+    max_retries: int = 3
+
+
+@app.post("/test-plans/validate")
+async def validate_test_plan_endpoint(request: TestPlanValidateRequest):
+    """
+    Validate a test plan without executing it.
+
+    This endpoint parses and validates the test plan structure,
+    checking for:
+    - Required fields (test_case_id, description, steps)
+    - Valid action types
+    - Required expected_visual for each step
+    - No forbidden fields (coordinates, selectors)
+
+    Returns validation result with parsed plan details or errors.
+    """
+    try:
+        result = await validate_test_plan(request.test_plan)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/test-plans/sample")
+async def get_sample_test_plan():
+    """
+    Get a sample test plan for reference.
+
+    Returns a complete example test plan that demonstrates
+    the correct format for semantic QA execution.
+    """
+    parser = TestPlanParser()
+    return {
+        "sample": parser.create_sample_test_plan(),
+        "supported_actions": [action.value for action in SemanticActionType],
+        "notes": {
+            "expected_visual": "REQUIRED for every step - describes what should be visible after the action",
+            "target_description": "Visual description of the element to interact with (for input, click, select)",
+            "target": "URL for navigate actions",
+            "value": "Text to enter for input/select actions",
+            "forbidden_fields": ["x", "y", "coordinates", "selector", "css_selector", "xpath"]
+        }
+    }
+
+
+@app.post("/test-plans/execute")
+async def execute_test_plan_endpoint(
+    request: TestPlanExecuteRequest,
+    current_user: dict = Depends(get_current_user_optional)
+):
+    """
+    Execute a semantic test plan.
+
+    This endpoint executes a complete test plan using:
+    - Visual element location (Gemini Vision)
+    - Semantic action execution
+    - Visual verification after each step
+    - Evidence collection
+
+    For real-time updates during execution, use the WebSocket endpoint
+    /ws/test-plan instead.
+
+    Returns complete execution results with pass/fail status for each step.
+    """
+    try:
+        # Create browser and agent
+        browser = BrowserController()
+        agent = create_semantic_qa_agent(browser=browser)
+
+        try:
+            # Execute the test plan
+            result = await agent.execute_test_plan(
+                request.test_plan,
+                start_from_step=request.start_from_step,
+                stop_on_failure=request.stop_on_failure,
+                max_retries_per_step=request.max_retries_per_step
+            )
+
+            return result.model_dump()
+
+        finally:
+            await agent.close()
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/test-plans/step")
+async def execute_single_step_endpoint(
+    request: SingleStepExecuteRequest,
+    current_user: dict = Depends(get_current_user_optional)
+):
+    """
+    Execute a single test step.
+
+    Useful for:
+    - Running individual steps
+    - Re-running failed steps
+    - Step-by-step debugging
+
+    The browser session is created fresh for each call.
+    For persistent sessions, use the WebSocket endpoint.
+    """
+    try:
+        browser = BrowserController()
+        agent = create_semantic_qa_agent(browser=browser)
+
+        try:
+            result = await agent.execute_single_step(
+                request.step,
+                task_id=request.task_id,
+                max_retries=request.max_retries
+            )
+
+            return result.model_dump()
+
+        finally:
+            await agent.close()
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.websocket("/ws/test-plan")
+async def websocket_test_plan_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time semantic QA test execution.
+
+    This endpoint provides real-time updates during test plan execution,
+    including:
+    - Step status changes (pending, running, pass, fail)
+    - Screenshots after each step
+    - Overall progress
+    - Evidence on failure
+
+    Client sends:
+        {"type": "execute", "test_plan": {...}, "options": {...}}
+        {"type": "execute_step", "step": {...}, "step_id": 1}
+        {"type": "resume", "test_plan": {...}, "from_step": 3}
+        {"type": "stop"}
+
+    Server sends:
+        {"type": "status", "test_case_id": "...", "current_step": 1, "status": "running"}
+        {"type": "step_result", "step_id": 1, "status": "pass", "evidence": {...}}
+        {"type": "screenshot", "data": "base64..."}
+        {"type": "completed", "result": {...}}
+        {"type": "error", "message": "..."}
+    """
+    await websocket.accept()
+    WEBSOCKET_CONNECTIONS.inc()
+
+    # Session state
+    browser: Optional[BrowserController] = None
+    agent: Optional[SemanticQAAgent] = None
+    execution_task: Optional[asyncio.Task] = None
+    session_metrics = SessionMetrics(session_id=str(uuid.uuid4()))
+
+    async def send_json(data: dict):
+        """Helper to send JSON message."""
+        try:
+            await websocket.send_text(json.dumps(data))
+            session_metrics.record_message_sent()
+        except Exception as e:
+            logger.warning("websocket_send_error", error=str(e))
+
+    async def on_step_status(step_id: int, status: StepStatus, message: str):
+        """Callback for step status updates."""
+        await send_json({
+            "type": "step_status",
+            "step_id": step_id,
+            "status": status.value if hasattr(status, 'value') else status,
+            "message": message
+        })
+
+    async def on_execution_status(status: TestPlanExecutionStatus):
+        """Callback for overall execution status."""
+        await send_json({
+            "type": "execution_status",
+            "test_case_id": status.test_case_id,
+            "current_step_id": status.current_step_id,
+            "current_step_status": status.current_step_status.value if hasattr(status.current_step_status, 'value') else status.current_step_status,
+            "progress": status.overall_progress,
+            "steps_status": {k: (v.value if hasattr(v, 'value') else v) for k, v in status.steps_status.items()},
+            "message": status.message
+        })
+
+    async def on_screenshot(screenshot_b64: str):
+        """Callback to send screenshots."""
+        await send_json({
+            "type": "screenshot",
+            "data": screenshot_b64
+        })
+
+    try:
+        while True:
+            try:
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=0.5)
+                message = json.loads(data)
+                msg_type = message.get("type")
+                session_metrics.record_message_received()
+
+                if msg_type == "execute":
+                    # Execute a complete test plan
+                    test_plan = message.get("test_plan")
+                    options = message.get("options", {})
+
+                    if not test_plan:
+                        await send_json({"type": "error", "message": "test_plan is required"})
+                        continue
+
+                    # Cancel any running execution
+                    if execution_task and not execution_task.done():
+                        execution_task.cancel()
+                        try:
+                            await execution_task
+                        except asyncio.CancelledError:
+                            pass
+
+                    # Create browser if needed
+                    if browser is None:
+                        browser = BrowserController()
+
+                    # Create agent with callbacks
+                    agent = SemanticQAAgent(
+                        browser=browser,
+                        on_step_status=on_step_status,
+                        on_execution_status=on_execution_status,
+                        on_screenshot=on_screenshot,
+                        session_metrics=session_metrics
+                    )
+
+                    async def run_execution():
+                        try:
+                            result = await agent.execute_test_plan(
+                                test_plan,
+                                start_from_step=options.get("start_from_step", 1),
+                                stop_on_failure=options.get("stop_on_failure", True),
+                                max_retries_per_step=options.get("max_retries_per_step", 3)
+                            )
+
+                            await send_json({
+                                "type": "completed",
+                                "result": result.model_dump()
+                            })
+
+                        except asyncio.CancelledError:
+                            await send_json({
+                                "type": "status",
+                                "status": "stopped",
+                                "message": "Execution cancelled"
+                            })
+                        except Exception as e:
+                            import traceback
+                            traceback.print_exc()
+                            await send_json({
+                                "type": "error",
+                                "message": str(e)
+                            })
+
+                    execution_task = asyncio.create_task(run_execution())
+
+                elif msg_type == "execute_step":
+                    # Execute a single step
+                    step = message.get("step")
+
+                    if not step:
+                        await send_json({"type": "error", "message": "step is required"})
+                        continue
+
+                    # Create browser if needed
+                    if browser is None:
+                        browser = BrowserController()
+                        await browser.start()
+
+                    # Create agent if needed
+                    if agent is None:
+                        agent = SemanticQAAgent(
+                            browser=browser,
+                            on_step_status=on_step_status,
+                            on_screenshot=on_screenshot,
+                            session_metrics=session_metrics
+                        )
+
+                    try:
+                        result = await agent.execute_single_step(
+                            step,
+                            task_id=message.get("task_id"),
+                            max_retries=message.get("max_retries", 3)
+                        )
+
+                        await send_json({
+                            "type": "step_result",
+                            "step_id": result.step_id,
+                            "status": result.status.value if hasattr(result.status, 'value') else result.status,
+                            "result": result.model_dump()
+                        })
+
+                    except Exception as e:
+                        await send_json({
+                            "type": "error",
+                            "message": str(e)
+                        })
+
+                elif msg_type == "resume":
+                    # Resume execution from a specific step
+                    test_plan = message.get("test_plan")
+                    from_step = message.get("from_step", 1)
+
+                    if not test_plan:
+                        await send_json({"type": "error", "message": "test_plan is required"})
+                        continue
+
+                    if agent is None:
+                        if browser is None:
+                            browser = BrowserController()
+                        agent = SemanticQAAgent(
+                            browser=browser,
+                            on_step_status=on_step_status,
+                            on_execution_status=on_execution_status,
+                            on_screenshot=on_screenshot,
+                            session_metrics=session_metrics
+                        )
+
+                    async def run_resume():
+                        try:
+                            result = await agent.resume_from_step(
+                                test_plan,
+                                step_id=from_step
+                            )
+
+                            await send_json({
+                                "type": "completed",
+                                "result": result.model_dump()
+                            })
+
+                        except Exception as e:
+                            await send_json({
+                                "type": "error",
+                                "message": str(e)
+                            })
+
+                    execution_task = asyncio.create_task(run_resume())
+
+                elif msg_type == "stop":
+                    # Stop execution
+                    if agent:
+                        agent.stop()
+                    if execution_task and not execution_task.done():
+                        execution_task.cancel()
+
+                    await send_json({
+                        "type": "status",
+                        "status": "stopping",
+                        "message": "Stop requested"
+                    })
+
+                elif msg_type == "close_browser":
+                    # Close browser
+                    if browser:
+                        await browser.stop()
+                        browser = None
+                        agent = None
+
+                    await send_json({
+                        "type": "status",
+                        "status": "idle",
+                        "message": "Browser closed"
+                    })
+
+                elif msg_type == "get_screenshot":
+                    # Get current screenshot
+                    if browser and browser.is_started:
+                        screenshot = await browser.get_screenshot_base64()
+                        await send_json({
+                            "type": "screenshot",
+                            "data": screenshot
+                        })
+                    else:
+                        await send_json({
+                            "type": "error",
+                            "message": "Browser not started"
+                        })
+
+                elif msg_type == "ping":
+                    await send_json({"type": "pong"})
+
+            except asyncio.TimeoutError:
+                continue
+
+    except WebSocketDisconnect:
+        logger.info("test_plan_websocket_disconnected")
+        if agent:
+            agent.stop()
+        if execution_task and not execution_task.done():
+            execution_task.cancel()
+        if browser:
+            await browser.stop()
+    except Exception as e:
+        logger.error("test_plan_websocket_error", error=str(e))
+        if browser:
+            await browser.stop()
+    finally:
+        WEBSOCKET_CONNECTIONS.dec()
 
 
 if __name__ == "__main__":

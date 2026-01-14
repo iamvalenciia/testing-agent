@@ -1,0 +1,41 @@
+{
+  "test_case_id": "TC-003-COMPREHENSIVE",
+  "description": "Comprehensive test demonstrating all supported semantic actions",
+  "tags": ["demo", "all-actions", "reference"],
+  "metadata": {
+    "author": "QA Automation Team",
+    "version": "1.0",
+    "purpose": "Demonstrates all supported action types for semantic QA execution"
+  },
+  "steps": [
+    {
+      "step_id": 1,
+      "action": "navigate",
+      "target": "https://example.com",
+      "expected_visual": "Example Domain page with 'Example Domain' heading visible",
+      "timeout_seconds": 30
+    },
+    {
+      "step_id": 2,
+      "action": "verify",
+      "expected_visual": "Page fully loaded with 'Example Domain' title and 'More information...' link visible"
+    },
+    {
+      "step_id": 3,
+      "action": "click",
+      "target_description": "'More information...' link text",
+      "expected_visual": "Page navigates to IANA website or similar information page"
+    },
+    {
+      "step_id": 4,
+      "action": "wait",
+      "expected_visual": "Page content fully loaded",
+      "timeout_seconds": 5
+    },
+    {
+      "step_id": 5,
+      "action": "verify",
+      "expected_visual": "IANA or reference documentation page visible with detailed information"
+    }
+  ]
+}

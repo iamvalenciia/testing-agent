@@ -1,0 +1,36 @@
+{
+  "test_case_id": "TC-002-SEARCH",
+  "description": "Verify search functionality and results display",
+  "tags": ["functional", "search"],
+  "metadata": {
+    "author": "QA Automation Team",
+    "version": "1.0",
+    "priority": "high"
+  },
+  "steps": [
+    {
+      "step_id": 1,
+      "action": "navigate",
+      "target": "https://www.google.com",
+      "expected_visual": "Google search homepage with search input field and Google logo visible"
+    },
+    {
+      "step_id": 2,
+      "action": "input",
+      "target_description": "Search input field or textarea with placeholder 'Search' or empty",
+      "value": "Graphite Connect QA automation",
+      "expected_visual": "Search text visible in the input field, possibly with autocomplete suggestions"
+    },
+    {
+      "step_id": 3,
+      "action": "click",
+      "target_description": "Google Search button",
+      "expected_visual": "Search results page with list of results related to the search query"
+    },
+    {
+      "step_id": 4,
+      "action": "verify",
+      "expected_visual": "Search results displayed with titles, URLs, and descriptions for each result"
+    }
+  ]
+}
