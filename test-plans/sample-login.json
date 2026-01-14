@@ -1,0 +1,43 @@
+{
+  "test_case_id": "TC-001-LOGIN",
+  "description": "Verify login flow and dashboard access for Graphite Connect",
+  "tags": ["smoke", "login", "critical"],
+  "metadata": {
+    "author": "QA Automation Team",
+    "version": "1.0",
+    "environment": "test"
+  },
+  "steps": [
+    {
+      "step_id": 1,
+      "action": "navigate",
+      "target": "https://test.projectgraphite.com/signin",
+      "expected_visual": "Login page with Graphite logo, email input field, and password input field visible"
+    },
+    {
+      "step_id": 2,
+      "action": "input",
+      "target_description": "Email input field with placeholder 'Email' or 'Username'",
+      "value": "testuser@graphiteconnect.com",
+      "expected_visual": "Email address visible in the email input field"
+    },
+    {
+      "step_id": 3,
+      "action": "input",
+      "target_description": "Password input field",
+      "value": "TestPassword123!",
+      "expected_visual": "Password field shows masked characters (dots or asterisks)"
+    },
+    {
+      "step_id": 4,
+      "action": "click",
+      "target_description": "Sign In button or Login button",
+      "expected_visual": "Loading indicator or page transition occurs"
+    },
+    {
+      "step_id": 5,
+      "action": "verify",
+      "expected_visual": "Dashboard page visible with navigation menu, user profile icon, and main content area"
+    }
+  ]
+}
