@@ -393,7 +393,7 @@ class StepExecutor:
 2. Click on it to focus it
 3. Type the text: "{step.value}"
 
-DO NOT press Enter unless specifically instructed.
+IMPORTANT: Use type_text_at with press_enter=false. Do NOT press Enter after typing.
 Execute this action now."""
 
         elif step.action == SemanticActionType.CLICK:
@@ -532,7 +532,8 @@ Execute this action now."""
                 actual_x = denormalize_x(args["x"])
                 actual_y = denormalize_y(args["y"])
                 text = args.get("text", "")
-                press_enter = args.get("press_enter", True)
+                # Default to False to prevent auto-submit of forms
+                press_enter = args.get("press_enter", False)
                 clear_before_typing = args.get("clear_before_typing", True)
 
                 # Click to focus the element
@@ -548,7 +549,7 @@ Execute this action now."""
                 # Type the text
                 await self.browser.page.keyboard.type(text)
 
-                # Press Enter if requested
+                # Press Enter only if explicitly requested
                 if press_enter:
                     await self.browser.page.keyboard.press("Enter")
 
@@ -810,7 +811,8 @@ class SemanticActionExecutor:
                 actual_x = denormalize_x(args["x"])
                 actual_y = denormalize_y(args["y"])
                 text = args.get("text", "")
-                press_enter = args.get("press_enter", True)
+                # Default to False to prevent auto-submit of forms
+                press_enter = args.get("press_enter", False)
                 clear_before_typing = args.get("clear_before_typing", True)
 
                 await self.browser.page.mouse.click(actual_x, actual_y)
@@ -822,6 +824,7 @@ class SemanticActionExecutor:
 
                 await self.browser.page.keyboard.type(text)
 
+                # Press Enter only if explicitly requested
                 if press_enter:
                     await self.browser.page.keyboard.press("Enter")
 
