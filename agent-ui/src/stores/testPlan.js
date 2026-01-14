@@ -115,8 +115,11 @@ export const useTestPlanStore = defineStore('testPlan', () => {
                 break
 
             case 'screenshot':
-                // Screenshot for current step
-                if (currentStepId.value) {
+                // Screenshot with step_id from backend
+                if (data.step_id) {
+                    screenshots.value[data.step_id] = data.data
+                } else if (currentStepId.value) {
+                    // Fallback to current step if no step_id provided
                     screenshots.value[currentStepId.value] = data.data
                 }
                 break

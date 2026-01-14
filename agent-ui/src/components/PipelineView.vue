@@ -5,6 +5,9 @@
       <div class="test-info">
         <h3 v-if="testPlan">{{ testPlan.test_case_id }}</h3>
         <p v-if="testPlan">{{ testPlan.description }}</p>
+        <div v-if="testPlan?.tags" class="tags">
+          <span v-for="tag in testPlan.tags" :key="tag" class="tag">{{ tag }}</span>
+        </div>
       </div>
 
       <div class="pipeline-controls">
@@ -14,8 +17,10 @@
           @click="$emit('run-all')"
           :disabled="isRunning"
         >
-          <span class="icon">&#9654;</span>
-          Run All
+          <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+          Run All Steps
         </button>
 
         <button
@@ -23,8 +28,11 @@
           class="btn btn-warning"
           @click="$emit('resume')"
         >
-          <span class="icon">&#8635;</span>
-          Resume
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+          </svg>
+          Resume from Failure
         </button>
 
         <button
@@ -32,27 +40,53 @@
           class="btn btn-danger"
           @click="$emit('stop')"
         >
-          <span class="icon">&#9632;</span>
-          Stop
+          <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+            <rect x="6" y="6" width="12" height="12"></rect>
+          </svg>
+          Stop Execution
         </button>
-      </div>
-
-      <!-- Progress Bar -->
-      <div v-if="testPlan" class="progress-bar">
-        <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
-        <span class="progress-text">{{ completedSteps }} / {{ totalSteps }}</span>
       </div>
     </div>
 
-    <!-- Pipeline Steps -->
+    <!-- Progress Overview -->
+    <div v-if="testPlan" class="progress-overview">
+      <div class="progress-bar-container">
+        <div class="progress-bar">
+          <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
+        </div>
+        <span class="progress-label">{{ completedSteps }} / {{ totalSteps }} steps</span>
+      </div>
+
+      <div class="progress-stats">
+        <div class="stat passed">
+          <span class="stat-icon">&#10003;</span>
+          <span class="stat-value">{{ passedStepsCount }}</span>
+          <span class="stat-label">Passed</span>
+        </div>
+        <div class="stat failed">
+          <span class="stat-icon">&#10007;</span>
+          <span class="stat-value">{{ failedStepsCount }}</span>
+          <span class="stat-label">Failed</span>
+        </div>
+        <div class="stat pending">
+          <span class="stat-icon">&#9675;</span>
+          <span class="stat-value">{{ pendingStepsCount }}</span>
+          <span class="stat-label">Pending</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Vertical Pipeline Steps -->
     <div class="pipeline-steps" ref="pipelineRef">
       <div
         v-for="(step, index) in steps"
         :key="step.step_id"
         class="pipeline-step"
       >
-        <!-- Connector Line -->
-        <div v-if="index > 0" class="connector" :class="getConnectorClass(index)"></div>
+        <!-- Vertical Connector Line (before step) -->
+        <div v-if="index > 0" class="connector-vertical" :class="getConnectorClass(index)">
+          <div class="connector-line"></div>
+        </div>
 
         <!-- Step Card -->
         <StepCard
@@ -63,6 +97,7 @@
           :clickable="!isRunning"
           :screenshot="getStepScreenshot(step.step_id)"
           @click="handleStepClick"
+          @run-step="$emit('run-step', $event)"
           @view-screenshot="$emit('view-screenshot', $event)"
         />
       </div>
@@ -70,39 +105,42 @@
 
     <!-- Empty State -->
     <div v-if="!testPlan" class="empty-state">
-      <div class="empty-icon">&#128203;</div>
+      <div class="empty-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="80" height="80">
+          <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+          <path d="M9 12h6M9 16h6"></path>
+        </svg>
+      </div>
       <h4>No Test Plan Loaded</h4>
-      <p>Upload a JSON test plan or paste it in the input area to begin.</p>
+      <p>Paste a JSON test plan in the editor to begin execution</p>
     </div>
 
     <!-- Summary Panel (when completed) -->
-    <div v-if="executionResult" class="summary-panel">
+    <div v-if="executionResult" class="summary-panel" :class="executionResult.overall_status">
       <div class="summary-header">
-        <h4>Execution Summary</h4>
-        <span
-          class="overall-status"
-          :class="executionResult.overall_status"
-        >
-          {{ executionResult.overall_status.toUpperCase() }}
+        <div class="summary-title">
+          <h4>Execution Complete</h4>
+          <span class="overall-status-badge" :class="executionResult.overall_status">
+            {{ executionResult.overall_status === 'pass' ? 'PASSED' : 'FAILED' }}
+          </span>
+        </div>
+        <span class="execution-time">
+          Duration: {{ formatTime(executionResult.total_execution_time_ms) }}
         </span>
       </div>
 
       <div class="summary-stats">
-        <div class="stat">
-          <span class="stat-value pass">{{ executionResult.passed_steps }}</span>
-          <span class="stat-label">Passed</span>
+        <div class="summary-stat">
+          <span class="summary-value pass">{{ executionResult.passed_steps }}</span>
+          <span class="summary-label">Passed</span>
         </div>
-        <div class="stat">
-          <span class="stat-value fail">{{ executionResult.failed_steps }}</span>
-          <span class="stat-label">Failed</span>
+        <div class="summary-stat">
+          <span class="summary-value fail">{{ executionResult.failed_steps }}</span>
+          <span class="summary-label">Failed</span>
         </div>
-        <div class="stat">
-          <span class="stat-value skip">{{ executionResult.skipped_steps }}</span>
-          <span class="stat-label">Skipped</span>
-        </div>
-        <div class="stat">
-          <span class="stat-value time">{{ formatTime(executionResult.total_execution_time_ms) }}</span>
-          <span class="stat-label">Duration</span>
+        <div class="summary-stat">
+          <span class="summary-value skip">{{ executionResult.skipped_steps }}</span>
+          <span class="summary-label">Skipped</span>
         </div>
       </div>
     </div>
@@ -169,6 +207,18 @@ const completedSteps = computed(() => {
   ).length;
 });
 
+const passedStepsCount = computed(() =>
+  Object.values(props.stepsStatus).filter(s => s === 'pass').length
+);
+
+const failedStepsCount = computed(() =>
+  Object.values(props.stepsStatus).filter(s => s === 'fail').length
+);
+
+const pendingStepsCount = computed(() =>
+  Object.values(props.stepsStatus).filter(s => s === 'pending' || !s).length
+);
+
 const progressPercent = computed(() => {
   if (totalSteps.value === 0) return 0;
   return (completedSteps.value / totalSteps.value) * 100;
@@ -202,6 +252,7 @@ function getConnectorClass(index) {
   return {
     'pass': prevStatus === 'pass',
     'fail': prevStatus === 'fail',
+    'running': prevStatus === 'running',
     'pending': prevStatus === 'pending' || prevStatus === 'skipped'
   };
 }
@@ -213,6 +264,7 @@ function handleStepClick(step) {
 }
 
 function formatTime(ms) {
+  if (!ms) return '0s';
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
   return `${(ms / 60000).toFixed(1)}m`;
@@ -227,8 +279,7 @@ watch(() => props.currentStepId, async (newId) => {
     if (index >= 0 && stepElements[index]) {
       stepElements[index].scrollIntoView({
         behavior: 'smooth',
-        block: 'nearest',
-        inline: 'center'
+        block: 'center'
       });
     }
   }
@@ -246,39 +297,56 @@ watch(() => props.currentStepId, async (newId) => {
 
 /* Header */
 .pipeline-header {
-  padding: 16px;
+  padding: 20px 24px;
   border-bottom: 1px solid var(--border-color, #333);
   display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  align-items: center;
   justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
 .test-info h3 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 1.1rem;
   color: var(--text-primary, #fff);
+  font-weight: 600;
 }
 
 .test-info p {
-  margin: 4px 0 0;
-  font-size: 0.8rem;
+  margin: 6px 0 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary, #999);
+}
+
+.tags {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.tag {
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  background: var(--bg-tertiary, #1a1a2e);
+  border: 1px solid var(--border-color, #333);
+  border-radius: 12px;
   color: var(--text-secondary, #999);
 }
 
 .pipeline-controls {
   display: flex;
-  gap: 8px;
+  gap: 10px;
+  flex-shrink: 0;
 }
 
 .btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
+  gap: 8px;
+  padding: 10px 18px;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
@@ -297,6 +365,7 @@ watch(() => props.currentStepId, async (newId) => {
 
 .btn-primary:hover:not(:disabled) {
   background: #3dbdb5;
+  transform: translateY(-1px);
 }
 
 .btn-warning {
@@ -304,78 +373,145 @@ watch(() => props.currentStepId, async (newId) => {
   color: #000;
 }
 
+.btn-warning:hover:not(:disabled) {
+  background: #ec971f;
+}
+
 .btn-danger {
-  background: #d9534f;
+  background: #ef4444;
   color: #fff;
 }
 
-.btn .icon {
-  font-size: 0.9rem;
+.btn-danger:hover:not(:disabled) {
+  background: #dc2626;
 }
 
-/* Progress Bar */
-.progress-bar {
+.btn svg {
+  flex-shrink: 0;
+}
+
+/* Progress Overview */
+.progress-overview {
+  padding: 16px 24px;
+  background: var(--bg-secondary, #151528);
+  border-bottom: 1px solid var(--border-color, #333);
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.progress-bar-container {
   flex: 1;
   min-width: 200px;
-  max-width: 400px;
-  height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.progress-bar {
+  flex: 1;
+  height: 8px;
   background: var(--bg-tertiary, #1a1a2e);
-  border-radius: 12px;
+  border-radius: 4px;
   overflow: hidden;
-  position: relative;
 }
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--primary, #4ecdc4), #5cb85c);
+  background: linear-gradient(90deg, var(--primary, #4ecdc4), #22c55e);
+  border-radius: 4px;
   transition: width 0.3s ease;
 }
 
-.progress-text {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--text-primary, #fff);
+.progress-label {
+  font-size: 0.8rem;
+  color: var(--text-secondary, #999);
+  white-space: nowrap;
 }
 
-/* Pipeline Steps */
+.progress-stats {
+  display: flex;
+  gap: 20px;
+}
+
+.stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+}
+
+.stat-icon {
+  font-size: 1rem;
+}
+
+.stat.passed .stat-icon { color: #22c55e; }
+.stat.failed .stat-icon { color: #ef4444; }
+.stat.pending .stat-icon { color: #666; }
+
+.stat-value {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.stat.passed .stat-value { color: #22c55e; }
+.stat.failed .stat-value { color: #ef4444; }
+.stat.pending .stat-value { color: var(--text-secondary, #999); }
+
+.stat-label {
+  color: var(--text-secondary, #999);
+}
+
+/* Pipeline Steps - Vertical Layout */
 .pipeline-steps {
   flex: 1;
-  display: flex;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: auto;
   padding: 24px;
+  display: flex;
+  flex-direction: column;
   gap: 0;
-  align-items: flex-start;
 }
 
 .pipeline-step {
   display: flex;
-  align-items: center;
-  flex-shrink: 0;
+  flex-direction: column;
+  align-items: stretch;
 }
 
-/* Connector */
-.connector {
-  width: 40px;
-  height: 2px;
-  background: var(--border-color, #333);
-  margin: 0 -1px;
-  align-self: center;
-  transform: translateY(-50%);
-  margin-top: 50px;
+/* Vertical Connector */
+.connector-vertical {
+  display: flex;
+  justify-content: center;
+  padding: 0 0 0 40px;
+  height: 24px;
 }
 
-.connector.pass {
-  background: #5cb85c;
+.connector-line {
+  width: 2px;
+  height: 100%;
+  background: var(--border-color, #444);
+  transition: background 0.3s ease;
 }
 
-.connector.fail {
-  background: #d9534f;
+.connector-vertical.pass .connector-line {
+  background: #22c55e;
+}
+
+.connector-vertical.fail .connector-line {
+  background: #ef4444;
+}
+
+.connector-vertical.running .connector-line {
+  background: linear-gradient(180deg, #f0ad4e 0%, #f0ad4e 50%, transparent 50%, transparent 100%);
+  background-size: 2px 8px;
+  animation: dashedLine 0.5s linear infinite;
+}
+
+@keyframes dashedLine {
+  to {
+    background-position: 0 8px;
+  }
 }
 
 /* Empty State */
@@ -391,81 +527,103 @@ watch(() => props.currentStepId, async (newId) => {
 }
 
 .empty-icon {
-  font-size: 4rem;
-  margin-bottom: 16px;
-  opacity: 0.5;
+  margin-bottom: 20px;
+  opacity: 0.4;
+  color: var(--text-secondary, #666);
 }
 
 .empty-state h4 {
   margin: 0 0 8px;
   color: var(--text-primary, #fff);
+  font-size: 1.1rem;
 }
 
 .empty-state p {
   margin: 0;
   font-size: 0.9rem;
+  max-width: 300px;
 }
 
 /* Summary Panel */
 .summary-panel {
-  padding: 16px;
+  padding: 20px 24px;
   border-top: 1px solid var(--border-color, #333);
   background: var(--bg-secondary, #151528);
+}
+
+.summary-panel.pass {
+  border-top: 3px solid #22c55e;
+}
+
+.summary-panel.fail {
+  border-top: 3px solid #ef4444;
 }
 
 .summary-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
-.summary-header h4 {
+.summary-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.summary-title h4 {
   margin: 0;
-  font-size: 0.9rem;
+  font-size: 1rem;
 }
 
-.overall-status {
+.overall-status-badge {
   padding: 4px 12px;
   border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.overall-status-badge.pass {
+  background: #22c55e;
+  color: #fff;
+}
+
+.overall-status-badge.fail {
+  background: #ef4444;
+  color: #fff;
+}
+
+.execution-time {
   font-size: 0.8rem;
-  font-weight: 600;
-}
-
-.overall-status.pass {
-  background: #5cb85c;
-  color: #fff;
-}
-
-.overall-status.fail {
-  background: #d9534f;
-  color: #fff;
+  color: var(--text-secondary, #999);
 }
 
 .summary-stats {
   display: flex;
-  gap: 24px;
+  gap: 32px;
 }
 
-.stat {
+.summary-stat {
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 
-.stat-value {
-  font-size: 1.5rem;
+.summary-value {
+  font-size: 2rem;
   font-weight: 700;
 }
 
-.stat-value.pass { color: #5cb85c; }
-.stat-value.fail { color: #d9534f; }
-.stat-value.skip { color: #777; }
-.stat-value.time { color: var(--text-primary, #fff); }
+.summary-value.pass { color: #22c55e; }
+.summary-value.fail { color: #ef4444; }
+.summary-value.skip { color: #777; }
 
-.stat-label {
-  font-size: 0.7rem;
+.summary-label {
+  font-size: 0.75rem;
   color: var(--text-secondary, #999);
   text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 </style>
