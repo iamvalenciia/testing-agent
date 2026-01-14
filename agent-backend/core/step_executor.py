@@ -468,6 +468,8 @@ Execute this action now."""
         Execute a computer use function call from Gemini.
 
         Maps Gemini's computer use actions to browser controller actions.
+        Gemini returns normalized coordinates (0-999) that must be converted
+        to actual pixel coordinates.
         """
         action_name = function_call.name
         args = dict(function_call.args) if function_call.args else {}
@@ -478,26 +480,126 @@ Execute this action now."""
             args=args
         )
 
-        # Map computer use actions to browser controller
-        if action_name == "click":
-            # Computer use provides x, y coordinates
+        # Screen dimensions - should match browser viewport
+        SCREEN_WIDTH = 1440
+        SCREEN_HEIGHT = 900
+
+        def denormalize_x(x: int) -> int:
+            """Convert normalized x coordinate (0-999) to actual pixel coordinate."""
+            return int(x / 1000 * SCREEN_WIDTH)
+
+        def denormalize_y(y: int) -> int:
+            """Convert normalized y coordinate (0-999) to actual pixel coordinate."""
+            return int(y / 1000 * SCREEN_HEIGHT)
+
+        # Handle all Gemini Computer Use actions
+        if action_name == "open_web_browser":
+            # Browser is already open
+            pass
+
+        elif action_name == "wait_5_seconds":
+            await asyncio.sleep(5)
+
+        elif action_name == "go_back":
+            await self.browser.page.go_back()
+
+        elif action_name == "go_forward":
+            await self.browser.page.go_forward()
+
+        elif action_name == "search":
+            # Navigate to default search engine
+            await self.browser.page.goto("https://www.google.com")
+
+        elif action_name == "navigate":
+            url = args.get("url", "")
+            if url:
+                await self.browser.page.goto(url)
+
+        elif action_name == "click_at":
             if "x" in args and "y" in args:
-                await self.browser.execute_action("click_at", {
-                    "x": int(args["x"] * 1000 / 1440),  # Normalize to 0-1000
-                    "y": int(args["y"] * 1000 / 900)
-                })
+                actual_x = denormalize_x(args["x"])
+                actual_y = denormalize_y(args["y"])
+                await self.browser.page.mouse.click(actual_x, actual_y)
 
-        elif action_name == "type":
-            text = args.get("text", "")
-            await self.browser.page.keyboard.type(text)
+        elif action_name == "hover_at":
+            if "x" in args and "y" in args:
+                actual_x = denormalize_x(args["x"])
+                actual_y = denormalize_y(args["y"])
+                await self.browser.page.mouse.move(actual_x, actual_y)
 
-        elif action_name == "key":
-            key = args.get("key", "")
-            await self.browser.page.keyboard.press(key)
+        elif action_name == "type_text_at":
+            if "x" in args and "y" in args:
+                actual_x = denormalize_x(args["x"])
+                actual_y = denormalize_y(args["y"])
+                text = args.get("text", "")
+                press_enter = args.get("press_enter", True)
+                clear_before_typing = args.get("clear_before_typing", True)
 
-        elif action_name == "scroll":
+                # Click to focus the element
+                await self.browser.page.mouse.click(actual_x, actual_y)
+                await asyncio.sleep(0.1)
+
+                # Clear existing text if requested
+                if clear_before_typing:
+                    # Select all and delete
+                    await self.browser.page.keyboard.press("Control+A")
+                    await self.browser.page.keyboard.press("Backspace")
+
+                # Type the text
+                await self.browser.page.keyboard.type(text)
+
+                # Press Enter if requested
+                if press_enter:
+                    await self.browser.page.keyboard.press("Enter")
+
+        elif action_name == "key_combination":
+            keys = args.get("keys", "")
+            if keys:
+                await self.browser.page.keyboard.press(keys)
+
+        elif action_name == "scroll_document":
             direction = args.get("direction", "down")
-            await self.browser.execute_action("scroll_document", {"direction": direction})
+            scroll_amount = 300
+            if direction == "down":
+                await self.browser.page.mouse.wheel(0, scroll_amount)
+            elif direction == "up":
+                await self.browser.page.mouse.wheel(0, -scroll_amount)
+            elif direction == "right":
+                await self.browser.page.mouse.wheel(scroll_amount, 0)
+            elif direction == "left":
+                await self.browser.page.mouse.wheel(-scroll_amount, 0)
+
+        elif action_name == "scroll_at":
+            if "x" in args and "y" in args:
+                actual_x = denormalize_x(args["x"])
+                actual_y = denormalize_y(args["y"])
+                direction = args.get("direction", "down")
+                magnitude = args.get("magnitude", 800)
+                scroll_pixels = int(magnitude / 1000 * SCREEN_HEIGHT)
+
+                # Move to position first
+                await self.browser.page.mouse.move(actual_x, actual_y)
+
+                if direction == "down":
+                    await self.browser.page.mouse.wheel(0, scroll_pixels)
+                elif direction == "up":
+                    await self.browser.page.mouse.wheel(0, -scroll_pixels)
+                elif direction == "right":
+                    await self.browser.page.mouse.wheel(scroll_pixels, 0)
+                elif direction == "left":
+                    await self.browser.page.mouse.wheel(-scroll_pixels, 0)
+
+        elif action_name == "drag_and_drop":
+            if all(k in args for k in ["x", "y", "destination_x", "destination_y"]):
+                start_x = denormalize_x(args["x"])
+                start_y = denormalize_y(args["y"])
+                end_x = denormalize_x(args["destination_x"])
+                end_y = denormalize_y(args["destination_y"])
+
+                await self.browser.page.mouse.move(start_x, start_y)
+                await self.browser.page.mouse.down()
+                await self.browser.page.mouse.move(end_x, end_y)
+                await self.browser.page.mouse.up()
 
         else:
             logger.warning("unknown_computer_use_action", action=action_name)
@@ -682,24 +784,63 @@ class SemanticActionExecutor:
         return result
 
     async def _execute_function_call(self, function_call) -> Dict[str, Any]:
-        """Execute a function call from the model."""
+        """Execute a function call from the model using Gemini Computer Use action format."""
         action_name = function_call.name
         args = dict(function_call.args) if function_call.args else {}
 
-        # Map to browser controller actions
-        if action_name == "click":
-            await self.browser.execute_action("click_at", {
-                "x": int(args.get("x", 500) * 1000 / 1440),
-                "y": int(args.get("y", 500) * 1000 / 900)
-            })
-        elif action_name == "type":
-            await self.browser.page.keyboard.type(args.get("text", ""))
-        elif action_name == "key":
-            await self.browser.page.keyboard.press(args.get("key", ""))
-        elif action_name == "scroll":
-            await self.browser.execute_action("scroll_document", {
-                "direction": args.get("direction", "down")
-            })
+        # Screen dimensions
+        SCREEN_WIDTH = 1440
+        SCREEN_HEIGHT = 900
+
+        def denormalize_x(x: int) -> int:
+            return int(x / 1000 * SCREEN_WIDTH)
+
+        def denormalize_y(y: int) -> int:
+            return int(y / 1000 * SCREEN_HEIGHT)
+
+        # Handle Gemini Computer Use actions
+        if action_name == "click_at":
+            if "x" in args and "y" in args:
+                actual_x = denormalize_x(args["x"])
+                actual_y = denormalize_y(args["y"])
+                await self.browser.page.mouse.click(actual_x, actual_y)
+
+        elif action_name == "type_text_at":
+            if "x" in args and "y" in args:
+                actual_x = denormalize_x(args["x"])
+                actual_y = denormalize_y(args["y"])
+                text = args.get("text", "")
+                press_enter = args.get("press_enter", True)
+                clear_before_typing = args.get("clear_before_typing", True)
+
+                await self.browser.page.mouse.click(actual_x, actual_y)
+                await asyncio.sleep(0.1)
+
+                if clear_before_typing:
+                    await self.browser.page.keyboard.press("Control+A")
+                    await self.browser.page.keyboard.press("Backspace")
+
+                await self.browser.page.keyboard.type(text)
+
+                if press_enter:
+                    await self.browser.page.keyboard.press("Enter")
+
+        elif action_name == "key_combination":
+            keys = args.get("keys", "")
+            if keys:
+                await self.browser.page.keyboard.press(keys)
+
+        elif action_name == "scroll_document":
+            direction = args.get("direction", "down")
+            scroll_amount = 300
+            if direction == "down":
+                await self.browser.page.mouse.wheel(0, scroll_amount)
+            elif direction == "up":
+                await self.browser.page.mouse.wheel(0, -scroll_amount)
+            elif direction == "right":
+                await self.browser.page.mouse.wheel(scroll_amount, 0)
+            elif direction == "left":
+                await self.browser.page.mouse.wheel(-scroll_amount, 0)
 
         return {
             "action": action_name,
