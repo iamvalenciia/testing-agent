@@ -981,16 +981,104 @@ async def websocket_endpoint(websocket: WebSocket):
                 msg_type = message.get("type")
                 session_metrics.record_message_received()
 
-                if msg_type == "start":
+                if msg_type == "start" or msg_type == "task":
                     goal = message.get("goal", "")
                     start_url = message.get("start_url", "")
                     step_offset = message.get("step_offset", 0)
                     mode = message.get("mode", "training") # "training" or "production"
-                    
+
                     if not goal:
                         await send_json({"type": "error", "message": "Goal is required"})
                         continue
-                        
+
+                    # ==============================================
+                    # DETECT TEST PLAN JSON IN GOAL
+                    # ==============================================
+                    test_plan_detected = None
+                    try:
+                        # Try to parse as JSON test plan
+                        if goal.strip().startswith("{"):
+                            parsed = json.loads(goal)
+                            # Check if it looks like a test plan
+                            if "test_case_id" in parsed and "steps" in parsed:
+                                test_plan_detected = parsed
+                                print(f"[TEST PLAN] Detected test plan: {parsed.get('test_case_id')}")
+                            elif "test_plan" in parsed:
+                                test_plan_detected = parsed.get("test_plan")
+                                print(f"[TEST PLAN] Detected wrapped test plan: {test_plan_detected.get('test_case_id')}")
+                    except json.JSONDecodeError:
+                        pass  # Not JSON, treat as regular goal
+
+                    # If test plan detected, run Semantic QA Agent
+                    if test_plan_detected:
+                        await send_json({
+                            "type": "status",
+                            "status": "running",
+                            "message": f"Executing Test Plan: {test_plan_detected.get('test_case_id', 'Unknown')}"
+                        })
+
+                        task_id = str(uuid.uuid4())
+
+                        # Create persistent browser if not exists
+                        if persistent_browser is None:
+                            persistent_browser = BrowserController()
+                            auth_service = get_auth_service()
+                            storage_state = auth_service.get_storage_state()
+                            await persistent_browser.start(storage_state=storage_state)
+
+                        # Create Semantic QA Agent
+                        semantic_agent = SemanticQAAgent(
+                            browser=persistent_browser,
+                            session_metrics=session_metrics
+                        )
+
+                        async def run_test_plan_task():
+                            try:
+                                result = await semantic_agent.execute_test_plan(
+                                    test_plan_detected,
+                                    stop_on_failure=True,
+                                    max_retries_per_step=3
+                                )
+
+                                # Send step results
+                                for step_result in result.steps_results:
+                                    status_emoji = "✓" if step_result.status == "pass" else "✗" if step_result.status == "fail" else "○"
+                                    await send_json({
+                                        "type": "message",
+                                        "role": "agent",
+                                        "content": f"{status_emoji} Step {step_result.step_id} ({step_result.action}): {step_result.status.upper()}"
+                                    })
+
+                                # Send final result
+                                summary = f"### Test Execution Complete\n\n"
+                                summary += f"**Test Case:** {result.test_case_id}\n"
+                                summary += f"**Status:** {result.overall_status.upper()}\n"
+                                summary += f"**Passed:** {result.passed_steps} | **Failed:** {result.failed_steps} | **Skipped:** {result.skipped_steps}\n"
+                                summary += f"**Duration:** {result.total_execution_time_ms}ms"
+
+                                await send_json({
+                                    "type": "status",
+                                    "status": "completed",
+                                    "message": summary
+                                })
+
+                                await send_json({
+                                    "type": "completed",
+                                    "workflow_id": task_id,
+                                    "test_result": result.model_dump()
+                                })
+
+                            except Exception as e:
+                                import traceback
+                                traceback.print_exc()
+                                await send_json({
+                                    "type": "error",
+                                    "message": f"Test plan execution failed: {str(e)}"
+                                })
+
+                        agent_task = asyncio.create_task(run_test_plan_task())
+                        continue  # Skip regular goal processing
+
                     # Inject Auth State
                     auth_service = get_auth_service()
                     storage_state = auth_service.get_storage_state()
@@ -1730,6 +1818,81 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 elif msg_type == "ping":
                     await send_json({"type": "pong"})
+
+                elif msg_type == "execute_test_plan":
+                    # ==============================================
+                    # DIRECT TEST PLAN EXECUTION (Alternative method)
+                    # ==============================================
+                    test_plan = message.get("test_plan")
+                    options = message.get("options", {})
+
+                    if not test_plan:
+                        await send_json({"type": "error", "message": "test_plan is required"})
+                        continue
+
+                    print(f"[TEST PLAN] Direct execution: {test_plan.get('test_case_id', 'Unknown')}")
+
+                    await send_json({
+                        "type": "status",
+                        "status": "running",
+                        "message": f"Executing: {test_plan.get('test_case_id', 'Test Plan')}"
+                    })
+
+                    task_id = str(uuid.uuid4())
+
+                    # Create browser if needed
+                    if persistent_browser is None:
+                        persistent_browser = BrowserController()
+                        auth_service = get_auth_service()
+                        storage_state = auth_service.get_storage_state()
+                        await persistent_browser.start(storage_state=storage_state)
+
+                    # Create Semantic QA Agent
+                    semantic_agent = SemanticQAAgent(
+                        browser=persistent_browser,
+                        session_metrics=session_metrics
+                    )
+
+                    async def run_direct_test_plan():
+                        try:
+                            result = await semantic_agent.execute_test_plan(
+                                test_plan,
+                                stop_on_failure=options.get("stop_on_failure", True),
+                                max_retries_per_step=options.get("max_retries", 3)
+                            )
+
+                            for step_result in result.steps_results:
+                                status_emoji = "✓" if step_result.status == "pass" else "✗" if step_result.status == "fail" else "○"
+                                await send_json({
+                                    "type": "message",
+                                    "role": "agent",
+                                    "content": f"{status_emoji} Step {step_result.step_id} ({step_result.action}): {step_result.status.upper()}"
+                                })
+
+                            summary = f"### Test Complete: {result.overall_status.upper()}\n"
+                            summary += f"Passed: {result.passed_steps} | Failed: {result.failed_steps} | Skipped: {result.skipped_steps}"
+
+                            await send_json({
+                                "type": "status",
+                                "status": "completed",
+                                "message": summary
+                            })
+
+                            await send_json({
+                                "type": "completed",
+                                "workflow_id": task_id,
+                                "test_result": result.model_dump()
+                            })
+
+                        except Exception as e:
+                            import traceback
+                            traceback.print_exc()
+                            await send_json({
+                                "type": "error",
+                                "message": f"Test execution failed: {str(e)}"
+                            })
+
+                    agent_task = asyncio.create_task(run_direct_test_plan())
 
             except asyncio.TimeoutError:
                 # No message received, just continue the loop
