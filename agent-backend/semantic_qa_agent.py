@@ -81,7 +81,7 @@ class SemanticQAAgent:
         output_dir: str = "data/screenshots",
         on_step_status: Optional[Callable[[int, StepStatus, str], Awaitable[None]]] = None,
         on_execution_status: Optional[Callable[[TestPlanExecutionStatus], Awaitable[None]]] = None,
-        on_screenshot: Optional[Callable[[str], Awaitable[None]]] = None,
+        on_screenshot: Optional[Callable[[int, str], Awaitable[None]]] = None,  # (step_id, screenshot_b64)
         session_metrics: Optional[SessionMetrics] = None,
     ):
         """
@@ -226,16 +226,16 @@ class SemanticQAAgent:
             steps_results.append(result)
             steps_status[step.step_id] = result.status
 
-            # Send screenshot to UI
+            # Send screenshot to UI with step_id
             if self.on_screenshot and result.evidence and result.evidence.screenshot_after:
                 try:
-                    # Read screenshot and send to UI
+                    # Read screenshot and send to UI with step_id
                     import base64
                     with open(result.evidence.screenshot_after, 'rb') as f:
                         screenshot_b64 = base64.b64encode(f.read()).decode('utf-8')
-                    await self.on_screenshot(screenshot_b64)
+                    await self.on_screenshot(step.step_id, screenshot_b64)
                 except Exception as e:
-                    logger.warning("screenshot_send_failed", error=str(e))
+                    logger.warning("screenshot_send_failed", error=str(e), step_id=step.step_id)
 
             # Check for failure
             if result.status == StepStatus.FAIL:

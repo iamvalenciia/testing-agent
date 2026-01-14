@@ -8,10 +8,17 @@ import { useAuthStore } from '../stores/auth'
 // Lazy-load views
 const AgentView = () => import('../views/AgentView.vue')
 const LoginView = () => import('../views/LoginView.vue')
+const SemanticQAView = () => import('../views/SemanticQAView.vue')
 
 const routes = [
     {
         path: '/',
+        name: 'semantic-qa',
+        component: SemanticQAView,
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/agent',
         name: 'agent',
         component: AgentView,
         meta: { requiresAuth: true }

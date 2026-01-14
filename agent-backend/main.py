@@ -2220,10 +2220,11 @@ async def websocket_test_plan_endpoint(websocket: WebSocket):
             "message": status.message
         })
 
-    async def on_screenshot(screenshot_b64: str):
-        """Callback to send screenshots."""
+    async def on_screenshot(step_id: int, screenshot_b64: str):
+        """Callback to send screenshots with step_id."""
         await send_json({
             "type": "screenshot",
+            "step_id": step_id,
             "data": screenshot_b64
         })
 
