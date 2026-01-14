@@ -25,14 +25,16 @@
 
         <button
           v-if="hasFailedSteps && !isRunning"
-          class="btn btn-warning"
+          class="btn btn-warning btn-resume"
           @click="$emit('resume')"
+          title="Resume from Failure"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
             <polyline points="23 4 23 10 17 10"></polyline>
             <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
           </svg>
-          Resume from Failure
+          <span class="btn-text">Resume from Failure</span>
+          <span class="btn-text-short">Resume</span>
         </button>
 
         <button
@@ -339,8 +341,10 @@ watch(() => props.currentStepId, async (newId) => {
 .pipeline-controls {
   display: flex;
   gap: 6px;
-  flex-shrink: 0;
+  flex-shrink: 1;
   flex-wrap: wrap;
+  min-width: 0;
+  justify-content: flex-end;
 }
 
 .btn {
@@ -354,6 +358,8 @@ watch(() => props.currentStepId, async (newId) => {
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .btn svg {
@@ -391,6 +397,30 @@ watch(() => props.currentStepId, async (newId) => {
 
 .btn-danger:hover:not(:disabled) {
   background: #dc2626;
+}
+
+/* Responsive button text */
+.btn-resume .btn-text-short {
+  display: none;
+}
+
+.btn-resume .btn-text {
+  display: inline;
+}
+
+@media (max-width: 400px) {
+  .btn-resume .btn-text {
+    display: none;
+  }
+  .btn-resume .btn-text-short {
+    display: inline;
+  }
+}
+
+@media (max-width: 300px) {
+  .btn-resume .btn-text-short {
+    display: none;
+  }
 }
 
 /* Progress Overview */
